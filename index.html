@@ -258,7 +258,14 @@
                 const today = getToday();
 
                 for (let i = 0; i < firstDayIndex; i++) {
-                    days.push(<div key={`empty-${i}`} className="aspect-square calendar-cell bg-white"></div>);
+                    days.push(
+                        <div key={`empty-${i}`} className="flex flex-col">
+                            <div className="aspect-square calendar-cell bg-white"></div>
+                            <div className="flex justify-center py-2">
+                                <span className="text-transparent text-sm">+</span>
+                            </div>
+                        </div>
+                    );
                 }
 
                 for (let day = 1; day <= totalDays; day++) {
@@ -275,22 +282,20 @@
                     }
 
                     days.push(
-                        <div
-                            key={dayKey}
-                            className={`relative ${cellClass} aspect-square flex flex-col`}
-                        >
-                            <div className="absolute top-3 left-3 text-base text-gray-400" style={{fontWeight: 200}}>{day}</div>
-                            {/* 主要内容区域 */}
-                            <div className="flex-1 flex items-center justify-center p-4">
+                        <div key={dayKey} className="flex flex-col">
+                            <div className={`relative ${cellClass} aspect-square`}>
+                                <div className="absolute top-2 left-2 text-xs text-gray-400 z-10" style={{fontWeight: 300}}>{day}</div>
+                                
+                                {/* 主要内容区域 - 占满整个格子 */}
                                 {postsForDay.length > 0 && postsForDay[0].files && postsForDay[0].files.length > 0 ? (
                                     <div className="relative group w-full h-full">
                                         {/* 删除按钮 */}
                                         <button
                                             onClick={() => removeMedia(currentDay, 0)}
-                                            className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity bg-white rounded-full p-1 shadow-md hover:bg-gray-50"
+                                            className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity bg-white rounded-full p-1 shadow-md hover:bg-gray-50"
                                             title="删除内容"
                                         >
-                                            <XCircle size={14} className="text-gray-600" />
+                                            <XCircle size={12} className="text-gray-600" />
                                         </button>
                                         
                                         {postsForDay[0].files[0].type === 'image' ? (
@@ -330,14 +335,16 @@
                                 ) : null}
                             </div>
                             
-                            {/* 右下角加号 */}
-                            <button
-                                onClick={() => openModal(currentDay)}
-                                className="absolute bottom-3 right-3 text-gray-300 hover:text-gray-500 transition-colors text-lg"
-                                title="添加内容"
-                            >
-                                +
-                            </button>
+                            {/* 底部添加按钮 - 居中显示 */}
+                            <div className="flex justify-center py-2">
+                                <button
+                                    onClick={() => openModal(currentDay)}
+                                    className="text-gray-300 hover:text-gray-500 transition-colors text-sm"
+                                    title="添加内容"
+                                >
+                                    +
+                                </button>
+                            </div>
                         </div>
                     );
                 }
