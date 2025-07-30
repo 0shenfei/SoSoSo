@@ -692,51 +692,21 @@
                     const saved = localStorage.getItem('socialMediaCalendar');
                     const data = saved ? JSON.parse(saved) : {};
                     
-                    console.log('加载本地数据，开始数据修复...');
-                    let needsReuploadCount = 0;
+                    console.log('加载本地数据...');
                     
-                    // 增强的数据修复：处理视频文件的本地存储问题
+                    // 简单的数据修复：只处理无效的blob URL
                     Object.keys(data).forEach(dayKey => {
                         if (data[dayKey] && Array.isArray(data[dayKey])) {
                             data[dayKey].forEach(post => {
                                 if (post.files && Array.isArray(post.files)) {
                                     post.files.forEach(file => {
-                                        if (file.type === 'video') {
-                                            // 检查视频数据完整性
-                                            if (file.hasFullVideo && file.dataUrl && file.dataUrl.startsWith('data:video')) {
-                                                console.log(`✅ 视频数据完整: ${file.name}`);
-                                                // 数据完好，无需修复
-                                            } else if (file.tempUrl && file.tempUrl.startsWith('blob:')) {
-                                                console.warn(`⚠️ 临时视频URL已失效: ${file.name}`);
-                                                file.dataUrl = file.thumbnail;
-                                                file.originalDataUrl = file.thumbnail;
-                                                file.tempUrl = null;
-                                                file.needsReupload = true;
-                                                file.errorMessage = '视频需要重新上传以完整保存';
-                                                needsReuploadCount++;
-                                            } else if (file.dataUrl && file.dataUrl.startsWith('blob:')) {
-                                                console.warn(`⚠️ 修复无效的blob URL: ${file.name}`);
-                                                file.dataUrl = file.thumbnail || null;
-                                                file.originalDataUrl = file.thumbnail || null;
-                                                file.needsReupload = true;
-                                                file.errorMessage = '视频链接已失效，需要重新上传';
-                                                needsReuploadCount++;
-                                            } else if (!file.dataUrl && file.thumbnail) {
-                                                console.warn(`⚠️ 视频缺少播放源: ${file.name}`);
-                                                file.dataUrl = file.thumbnail;
-                                                file.originalDataUrl = file.thumbnail;
-                                                file.needsReupload = true;
-                                                needsReuploadCount++;
-                                            }
-                                        } else {
-                                            // 图片文件的修复逻辑
-                                            if (file.originalDataUrl && file.originalDataUrl.startsWith('blob:')) {
-                                                file.originalDataUrl = file.dataUrl;
-                                            }
-                                            if (file.dataUrl && file.dataUrl.startsWith('blob:')) {
-                                                file.dataUrl = file.thumbnail || file.originalDataUrl;
-                                                file.originalDataUrl = file.thumbnail || file.originalDataUrl;
-                                            }
+                                        // 修复无效的blob URLs
+                                        if (file.dataUrl && file.dataUrl.startsWith('blob:')) {
+                                            console.warn(`修复无效的blob URL: ${file.name}`);
+                                            file.dataUrl = file.thumbnail || file.originalDataUrl;
+                                        }
+                                        if (file.originalDataUrl && file.originalDataUrl.startsWith('blob:')) {
+                                            file.originalDataUrl = file.dataUrl || file.thumbnail;
                                         }
                                     });
                                 }
@@ -744,15 +714,7 @@
                         }
                     });
                     
-                    if (needsReuploadCount > 0) {
-                        console.log(`发现 ${needsReuploadCount} 个视频需要重新上传`);
-                        // 延迟显示提示，避免阻塞初始化
-                        setTimeout(() => {
-                            showTemporaryMessage(`发现 ${needsReuploadCount} 个视频需要重新上传以完整保存`, 'warning');
-                        }, 1000);
-                    }
-                    
-                    console.log('数据修复完成，已加载本地数据');
+                    console.log('本地数据加载完成');
                     return data;
                 } catch (error) {
                     console.error('加载数据失败:', error);
@@ -1018,39 +980,16 @@
             const openLightbox = (media) => {
                 console.log('OpenLightbox called with:', media);
                 
-                // 智能选择最佳的播放源
-                let bestVideoSrc = null;
-                if (media.type === 'video') {
-                    // 优先级：完整视频DataURL > 临时URL > 缩略图
-                    if (media.hasFullVideo && media.originalDataUrl && media.originalDataUrl.startsWith('data:video')) {
-                        bestVideoSrc = media.originalDataUrl;
-                        console.log('使用完整视频DataURL播放');
-                    } else if (media.tempUrl && media.tempUrl.startsWith('blob:')) {
-                        bestVideoSrc = media.tempUrl;
-                        console.log('使用临时ObjectURL播放（本次会话有效）');
-                    } else if (media.originalDataUrl) {
-                        bestVideoSrc = media.originalDataUrl;
-                        console.log('使用备用视频源播放');
-                    } else {
-                        bestVideoSrc = media.thumbnail;
-                        console.log('视频源不可用，显示缩略图');
-                    }
-                }
-                
-                // 确保media对象有正确的结构
+                // 简化的播放源选择：直接使用DataURL
                 const processedMedia = {
                     ...media,
-                    // 为视频使用最佳播放源，为图片使用原有逻辑
-                    dataUrl: media.type === 'video' ? bestVideoSrc : (media.originalDataUrl || media.dataUrl || media.cloudUrl),
-                    // 保持原有属性
-                    cloudUrl: media.cloudUrl,
-                    originalDataUrl: media.originalDataUrl,
-                    tempUrl: media.tempUrl,
-                    hasFullVideo: media.hasFullVideo,
+                    // 直接使用存储的DataURL，这应该是完整的视频或图片
+                    dataUrl: media.originalDataUrl || media.dataUrl,
                     type: media.type || (media.name && media.name.includes('.mp4') ? 'video' : 'image')
                 };
                 
                 console.log('Processed media for lightbox:', processedMedia);
+                console.log('Using dataUrl:', processedMedia.dataUrl?.substring(0, 50) + '...');
                 
                 setLightboxMedia(processedMedia);
                 setCurrentLightboxIndex(media.currentIndex || 0);
@@ -1272,58 +1211,47 @@
                                     file: file // 保存原始文件对象用于上传
                                 };
                             } else if (file.type.startsWith('video/')) {
-                                try {
-                                    const thumbnail = await createVideoThumbnail(file);
-                                    console.log(`开始处理视频文件: ${file.name}`);
-                                    
-                                    // 尝试将视频转换为DataURL进行完整存储
-                                    try {
-                                        const videoDataUrl = await compressVideo(file);
-                                        console.log(`视频DataURL转换成功: ${file.name}`);
-                                        return { 
-                                            type: 'video', 
-                                            thumbnail: thumbnail,        // 缩略图用于预览
-                                            dataUrl: videoDataUrl,       // 完整视频DataURL用于播放
-                                            originalDataUrl: videoDataUrl, // 同样的完整视频用于lightbox
-                                            name: file.name, 
-                                            size: file.size, 
-                                            isLargeFile: file.size > 50 * 1024 * 1024,
-                                            hasFullVideo: true,          // 标记有完整视频
-                                            file: file // 保存原始文件对象
-                                        };
-                                    } catch (videoError) {
-                                        console.warn(`视频文件过大无法完整存储，使用缩略图: ${file.name}`, videoError);
-                                        // 如果视频过大无法存储，创建一个临时的ObjectURL作为备用
-                                        const tempUrl = URL.createObjectURL(file);
-                                        return { 
-                                            type: 'video', 
-                                            thumbnail: thumbnail,
-                                            dataUrl: thumbnail,          // 预览使用缩略图
-                                            originalDataUrl: tempUrl,    // lightbox使用临时URL (仅当前会话有效)
-                                            tempUrl: tempUrl,            // 标记为临时URL
-                                            name: file.name, 
-                                            size: file.size, 
-                                            isLargeFile: true,
-                                            hasFullVideo: false,         // 标记没有完整视频存储
-                                            file: file // 保存原始文件对象，刷新后需要重新上传
-                                        };
-                                    }
-                                } catch (error) {
-                                    console.error(`视频处理失败: ${file.name}`, error);
-                                    // 最终fallback：只提供上传功能
-                                    return { 
-                                        type: 'video', 
-                                        thumbnail: null,
-                                        dataUrl: null,
-                                        originalDataUrl: null,
-                                        name: file.name, 
-                                        size: file.size, 
-                                        isLargeFile: true,
-                                        hasFullVideo: false,
-                                        error: error.message,
-                                        file: file
+                                // 回归简单有效的方式：直接转换视频为DataURL
+                                console.log(`处理视频文件: ${file.name}, 大小: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
+                                
+                                return new Promise((resolve, reject) => {
+                                    const reader = new FileReader();
+                                    reader.onload = (e) => {
+                                        const videoDataUrl = e.target.result;
+                                        console.log(`✅ 视频转换为DataURL成功: ${file.name}`);
+                                        
+                                        // 同时生成缩略图用于预览
+                                        createVideoThumbnail(file).then(thumbnail => {
+                                            resolve({
+                                                type: 'video',
+                                                dataUrl: videoDataUrl,        // 完整视频DataURL
+                                                originalDataUrl: videoDataUrl, // 同样用于lightbox
+                                                thumbnail: thumbnail,         // 缩略图
+                                                name: file.name,
+                                                size: file.size,
+                                                hasFullVideo: true,          // 标记有完整视频
+                                                file: file // 保存原始文件对象
+                                            });
+                                        }).catch(() => {
+                                            // 即使缩略图生成失败，也返回完整视频
+                                            resolve({
+                                                type: 'video',
+                                                dataUrl: videoDataUrl,
+                                                originalDataUrl: videoDataUrl,
+                                                thumbnail: null,
+                                                name: file.name,
+                                                size: file.size,
+                                                hasFullVideo: true,
+                                                file: file
+                                            });
+                                        });
                                     };
-                                }
+                                    reader.onerror = () => {
+                                        console.error(`视频读取失败: ${file.name}`);
+                                        reject(new Error('视频读取失败'));
+                                    };
+                                    reader.readAsDataURL(file);
+                                });
                             }
                         });
                         
@@ -1443,96 +1371,46 @@
                                                                 currentIndex: currentFileIndex
                                                             })}
                                                         >
-                                                            {/* 增强的视频显示：本地存储优先 */}
-                                                            {(() => {
-                                                                // 本地存储模式的视频源选择优先级：
-                                                                // 1. 完整的本地DataURL
-                                                                // 2. 临时ObjectURL（仅当前会话有效）
-                                                                // 3. 缩略图
-                                                                let videoSrc = null;
-                                                                let isFullVideo = false;
-                                                                
-                                                                if (currentFile.hasFullVideo && currentFile.dataUrl && currentFile.dataUrl.startsWith('data:video/')) {
-                                                                    videoSrc = currentFile.dataUrl;
-                                                                    isFullVideo = true;
-                                                                    if (DEBUG_MODE) console.log(`日历显示完整视频: ${currentFile.name}`);
-                                                                } else if (currentFile.tempUrl && currentFile.tempUrl.startsWith('blob:')) {
-                                                                    videoSrc = currentFile.tempUrl;
-                                                                    isFullVideo = true;
-                                                                    if (DEBUG_MODE) console.log(`日历显示临时视频: ${currentFile.name}`);
-                                                                } else if (currentFile.originalDataUrl && currentFile.originalDataUrl.startsWith('data:video/')) {
-                                                                    videoSrc = currentFile.originalDataUrl;
-                                                                    isFullVideo = true;
-                                                                    if (DEBUG_MODE) console.log(`日历显示原始视频: ${currentFile.name}`);
-                                                                }
-                                                                
-                                                                if (videoSrc && isFullVideo) {
-                                                                    return (
-                                                                        <video
-                                                                            src={videoSrc}
-                                                                            className="w-full h-full object-cover calendar-video"
-                                                                            autoPlay
-                                                                            muted
-                                                                            loop
-                                                                            playsInline
-                                                                            preload="metadata"
-                                                                            onClick={(e) => e.stopPropagation()}
-                                                                            onError={(e) => {
-                                                                                console.error('日历视频播放失败:', currentFile.name, videoSrc.substring(0, 50) + '...');
-                                                                                // 如果视频加载失败，显示缩略图
-                                                                                e.target.style.display = 'none';
-                                                                                const fallback = e.target.parentElement.querySelector('.video-fallback-thumbnail');
-                                                                                if (fallback) {
-                                                                                    fallback.style.display = 'block';
-                                                                                }
-                                                                            }}
-                                                                            onLoadedData={() => {
-                                                                                if (DEBUG_MODE) console.log('日历视频播放成功:', currentFile.name);
-                                                                            }}
-                                                                        />
-                                                                    );
-                                                                }
-                                                                
-                                                                // 显示缩略图作为后备或主要显示
-                                                                return currentFile.thumbnail ? (
-                                                                    <div className="w-full h-full relative">
-                                                                        <img
-                                                                            src={currentFile.thumbnail}
-                                                                            alt="视频缩略图"
-                                                                            className="w-full h-full object-cover video-fallback-thumbnail"
-                                                                        />
-                                                                        {/* 视频播放图标覆盖层 */}
-                                                                        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-20">
-                                                                            <div className="bg-white bg-opacity-90 rounded-full p-2">
-                                                                                <span className="text-gray-700 text-xl">▶</span>
-                                                                            </div>
-                                                                        </div>
-                                                                        {/* 如果需要重新上传，显示提示 */}
-                                                                        {currentFile.needsReupload && (
-                                                                            <div className="absolute top-1 left-1 bg-orange-500 text-white text-xs px-1 py-0.5 rounded">
-                                                                                需重传
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                ) : (
-                                                                    <div className="w-full h-full bg-gray-200 flex items-center justify-center">
-                                                                        <div className="text-center">
-                                                                            <span className="text-4xl">🎥</span>
-                                                                            <div className="text-xs text-gray-500 mt-1">视频处理中</div>
-                                                                        </div>
-                                                                    </div>
-                                                                );
-                                                            })()}
-                                                            
-                                                            {/* 缩略图后备显示 */}
-                                                            {currentFile.thumbnail && (
-                                                                <img
-                                                                    src={currentFile.thumbnail}
-                                                                    alt="视频缩略图"
-                                                                    className="w-full h-full object-cover"
-                                                                    style={{ display: 'none' }}
+                                                            {/* 简化的视频显示：直接使用DataURL */}
+                                                            {currentFile.dataUrl && currentFile.dataUrl.startsWith('data:video/') ? (
+                                                                <video
+                                                                    src={currentFile.dataUrl}
+                                                                    className="w-full h-full object-cover calendar-video"
+                                                                    autoPlay
+                                                                    muted
+                                                                    loop
+                                                                    playsInline
+                                                                    preload="metadata"
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    onError={(e) => {
+                                                                        console.error('视频播放失败:', currentFile.name);
+                                                                    }}
+                                                                    onLoadedData={() => {
+                                                                        if (DEBUG_MODE) console.log('视频播放成功:', currentFile.name);
+                                                                    }}
                                                                 />
+                                                            ) : currentFile.thumbnail ? (
+                                                                <div className="w-full h-full relative">
+                                                                    <img
+                                                                        src={currentFile.thumbnail}
+                                                                        alt="视频缩略图"
+                                                                        className="w-full h-full object-cover"
+                                                                    />
+                                                                    <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-20">
+                                                                        <div className="bg-white bg-opacity-90 rounded-full p-2">
+                                                                            <span className="text-gray-700 text-xl">▶</span>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="w-full h-full bg-gray-200 flex items-center justify-center">
+                                                                    <div className="text-center">
+                                                                        <span className="text-4xl">🎥</span>
+                                                                        <div className="text-xs text-gray-500 mt-1">视频加载中</div>
+                                                                    </div>
+                                                                </div>
                                                             )}
+
                                                         </div>
                                                     );
                                                 }
