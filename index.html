@@ -111,12 +111,14 @@
                         uploadPromise = new Promise(async (resolve, reject) => {
                             try {
                                 // 模拟上传进度
+                                let currentProgress = 0;
                                 const progressInterval = setInterval(() => {
-                                    if (progressCallback) {
-                                        const randomProgress = Math.min(90, Math.random() * 80 + 10);
-                                        progressCallback(randomProgress, fileName);
+                                    if (progressCallback && currentProgress < 85) {
+                                        currentProgress += Math.random() * 15 + 5;
+                                        currentProgress = Math.min(85, currentProgress);
+                                        progressCallback(currentProgress, fileName);
                                     }
-                                }, 500);
+                                }, 300);
 
                                 const { data, error } = await supabase.storage
                                     .from('media-files')
@@ -944,7 +946,22 @@
             };
 
             const openLightbox = (media) => {
-                setLightboxMedia(media);
+                console.log('OpenLightbox called with:', media);
+                
+                // 确保media对象有正确的结构
+                const processedMedia = {
+                    ...media,
+                    // 确保视频有可用的播放源
+                    dataUrl: media.dataUrl || media.cloudUrl || media.originalDataUrl,
+                    // 保持原有属性
+                    cloudUrl: media.cloudUrl,
+                    originalDataUrl: media.originalDataUrl,
+                    type: media.type || (media.name && media.name.includes('.mp4') ? 'video' : 'image')
+                };
+                
+                console.log('Processed media:', processedMedia);
+                
+                setLightboxMedia(processedMedia);
                 setCurrentLightboxIndex(media.currentIndex || 0);
             };
 

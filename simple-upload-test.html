@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>简单上传测试</title>
+    <script src="https://unpkg.com/@supabase/supabase-js@2.39.0/dist/umd/supabase.js"></script>
+</head>
+<body>
+    <h1>Supabase 上传测试</h1>
+    <input type="file" id="fileInput" accept="video/*,image/*">
+    <button onclick="testUpload()">测试上传</button>
+    <div id="result"></div>
+
+    <script>
+        const SUPABASE_URL = 'https://twmzmxuhddwdpylziabm.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR3bXpteHVoZGR3ZHB5bHppYWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MDM2NjYsImV4cCI6MjA2OTQ3OTY2Nn0._EBOw9cp7b9kN0_76STtY4D99deb8OLyQH4IEJ5l8AM';
+        
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        async function testUpload() {
+            const fileInput = document.getElementById('fileInput');
+            const result = document.getElementById('result');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                result.innerHTML = '<p style="color: red;">请选择文件</p>';
+                return;
+            }
+
+            result.innerHTML = '<p>开始测试...</p>';
+            
+            try {
+                // 1. 测试用户状态
+                result.innerHTML += '<p>检查用户状态...</p>';
+                const { data: { user }, error: userError } = await supabase.auth.getUser();
+                
+                if (userError) {
+                    result.innerHTML += `<p style="color: red;">用户错误: ${userError.message}</p>`;
+                    return;
+                }
+                
+                if (!user) {
+                    result.innerHTML += '<p style="color: orange;">用户未登录，尝试匿名上传...</p>';
+                } else {
+                    result.innerHTML += `<p style="color: green;">用户已登录: ${user.email}</p>`;
+                }
+                
+                // 2. 测试存储桶
+                result.innerHTML += '<p>检查存储桶...</p>';
+                const { data: buckets, error: bucketsError } = await supabase.storage.listBuckets();
+                
+                if (bucketsError) {
+                    result.innerHTML += `<p style="color: red;">存储桶错误: ${bucketsError.message}</p>`;
+                    return;
+                }
+                
+                result.innerHTML += `<p>找到存储桶: ${buckets.map(b => b.name).join(', ')}</p>`;
+                
+                // 3. 测试上传
+                result.innerHTML += '<p>尝试上传文件...</p>';
+                const fileName = `test_${Date.now()}_${file.name}`;
+                const filePath = user ? `${user.id}/${fileName}` : `anonymous/${fileName}`;
+                
+                const { data, error } = await supabase.storage
+                    .from('media-files')
+                    .upload(filePath, file);
+                
+                if (error) {
+                    result.innerHTML += `<p style="color: red;">上传失败: ${error.message}</p>`;
+                    result.innerHTML += `<p>错误详情: ${JSON.stringify(error)}</p>`;
+                    return;
+                }
+                
+                result.innerHTML += `<p style="color: green;">上传成功!</p>`;
+                result.innerHTML += `<p>路径: ${data.path}</p>`;
+                
+                // 4. 获取公共URL
+                const { data: { publicUrl } } = supabase.storage
+                    .from('media-files')
+                    .getPublicUrl(filePath);
+                
+                result.innerHTML += `<p>公共URL: <a href="${publicUrl}" target="_blank">${publicUrl}</a></p>`;
+                
+                // 5. 如果是视频，测试播放
+                if (file.type.startsWith('video/')) {
+                    result.innerHTML += `<p>测试视频播放:</p>`;
+                    result.innerHTML += `<video src="${publicUrl}" controls style="max-width: 400px;"></video>`;
+                }
+                
+            } catch (error) {
+                result.innerHTML += `<p style="color: red;">测试失败: ${error.message}</p>`;
+                console.error('测试错误:', error);
+            }
+        }
+    </script>
+</body>
+</html>

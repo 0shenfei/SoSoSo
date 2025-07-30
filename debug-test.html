@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频上传调试测试</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2.39.0/dist/umd/supabase.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        // Supabase配置
+        const SUPABASE_URL = 'https://twmzmxuhddwdpylziabm.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR3bXpteHVoZGR3ZHB5bHppYWJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM5MDM2NjYsImV4cCI6MjA2OTQ3OTY2Nn0._EBOw9cp7b9kN0_76STtY4D99deb8OLyQH4IEJ5l8AM';
+        
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        const DebugTest = () => {
+            const [testVideo, setTestVideo] = React.useState(null);
+            const [uploadStatus, setUploadStatus] = React.useState('');
+            const [showLightbox, setShowLightbox] = React.useState(false);
+            const [lightboxSrc, setLightboxSrc] = React.useState('');
+            
+            const handleFileSelect = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    console.log('选择的文件:', file);
+                    
+                    // 创建本地预览URL
+                    const localUrl = URL.createObjectURL(file);
+                    setTestVideo({
+                        file: file,
+                        name: file.name,
+                        localUrl: localUrl,
+                        type: file.type
+                    });
+                    
+                    console.log('本地URL:', localUrl);
+                }
+            };
+            
+            const testSupabaseUpload = async () => {
+                if (!testVideo) return;
+                
+                setUploadStatus('开始测试上传...');
+                console.log('开始上传测试');
+                
+                try {
+                    // 测试用户身份验证
+                    const { data: { user }, error: userError } = await supabase.auth.getUser();
+                    console.log('用户信息:', user, userError);
+                    
+                    if (!user) {
+                        setUploadStatus('错误: 用户未登录');
+                        return;
+                    }
+                    
+                    // 测试文件上传
+                    const fileName = `test_${Date.now()}_${testVideo.name}`;
+                    const filePath = `${user.id}/${fileName}`;
+                    
+                    console.log('开始上传文件到路径:', filePath);
+                    
+                    const { data, error } = await supabase.storage
+                        .from('media-files')
+                        .upload(filePath, testVideo.file);
+                    
+                    console.log('上传结果:', data, error);
+                    
+                    if (error) {
+                        setUploadStatus(`上传失败: ${error.message}`);
+                        return;
+                    }
+                    
+                    // 获取公共URL
+                    const { data: { publicUrl } } = supabase.storage
+                        .from('media-files')
+                        .getPublicUrl(filePath);
+                    
+                    console.log('公共URL:', publicUrl);
+                    
+                    setTestVideo(prev => ({
+                        ...prev,
+                        cloudUrl: publicUrl
+                    }));
+                    
+                    setUploadStatus(`上传成功! URL: ${publicUrl}`);
+                    
+                } catch (error) {
+                    console.error('上传错误:', error);
+                    setUploadStatus(`上传错误: ${error.message}`);
+                }
+            };
+            
+            const openLightbox = (src) => {
+                console.log('尝试打开lightbox, src:', src);
+                setLightboxSrc(src);
+                setShowLightbox(true);
+            };
+            
+            const testAuth = async () => {
+                try {
+                    const { data, error } = await supabase.auth.signInWithPassword({
+                        email: 'test@example.com',
+                        password: 'testpassword123'
+                    });
+                    console.log('登录测试:', data, error);
+                    setUploadStatus('请先手动登录您的账号');
+                } catch (error) {
+                    console.error('登录错误:', error);
+                    setUploadStatus('登录测试失败');
+                }
+            };
+            
+            return (
+                <div className="p-8 max-w-4xl mx-auto">
+                    <h1 className="text-2xl font-bold mb-6">视频上传调试测试</h1>
+                    
+                    <div className="space-y-6">
+                        {/* 文件选择 */}
+                        <div className="border p-4 rounded">
+                            <h2 className="text-lg font-semibold mb-2">1. 选择视频文件</h2>
+                            <input 
+                                type="file" 
+                                accept="video/*" 
+                                onChange={handleFileSelect}
+                                className="mb-2"
+                            />
+                            {testVideo && (
+                                <div className="text-sm text-gray-600">
+                                    <p>文件名: {testVideo.name}</p>
+                                    <p>类型: {testVideo.type}</p>
+                                    <p>大小: {(testVideo.file.size / 1024 / 1024).toFixed(2)} MB</p>
+                                </div>
+                            )}
+                        </div>
+                        
+                        {/* 本地预览测试 */}
+                        {testVideo && (
+                            <div className="border p-4 rounded">
+                                <h2 className="text-lg font-semibold mb-2">2. 本地预览测试</h2>
+                                <div className="flex gap-4">
+                                    <video 
+                                        src={testVideo.localUrl} 
+                                        controls 
+                                        className="w-64 h-auto border"
+                                        onError={(e) => console.error('本地视频加载错误:', e)}
+                                        onLoadedData={() => console.log('本地视频加载成功')}
+                                    />
+                                    <div>
+                                        <p>本地URL: {testVideo.localUrl}</p>
+                                        <button 
+                                            onClick={() => openLightbox(testVideo.localUrl)}
+                                            className="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                                        >
+                                            测试Lightbox (本地)
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {/* 认证测试 */}
+                        <div className="border p-4 rounded">
+                            <h2 className="text-lg font-semibold mb-2">3. 认证测试</h2>
+                            <button 
+                                onClick={testAuth}
+                                className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                            >
+                                测试登录状态
+                            </button>
+                        </div>
+                        
+                        {/* 上传测试 */}
+                        {testVideo && (
+                            <div className="border p-4 rounded">
+                                <h2 className="text-lg font-semibold mb-2">4. 上传测试</h2>
+                                <button 
+                                    onClick={testSupabaseUpload}
+                                    className="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 mr-4"
+                                >
+                                    测试上传到Supabase
+                                </button>
+                                <div className="mt-2 text-sm">{uploadStatus}</div>
+                            </div>
+                        )}
+                        
+                        {/* 云端预览测试 */}
+                        {testVideo && testVideo.cloudUrl && (
+                            <div className="border p-4 rounded">
+                                <h2 className="text-lg font-semibold mb-2">5. 云端预览测试</h2>
+                                <div className="flex gap-4">
+                                    <video 
+                                        src={testVideo.cloudUrl} 
+                                        controls 
+                                        className="w-64 h-auto border"
+                                        onError={(e) => console.error('云端视频加载错误:', e)}
+                                        onLoadedData={() => console.log('云端视频加载成功')}
+                                    />
+                                    <div>
+                                        <p>云端URL: {testVideo.cloudUrl}</p>
+                                        <button 
+                                            onClick={() => openLightbox(testVideo.cloudUrl)}
+                                            className="mt-2 px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                                        >
+                                            测试Lightbox (云端)
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    
+                    {/* Lightbox */}
+                    {showLightbox && (
+                        <div 
+                            className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50"
+                            onClick={() => setShowLightbox(false)}
+                        >
+                            <div className="relative max-w-4xl max-h-full">
+                                <button 
+                                    onClick={() => setShowLightbox(false)}
+                                    className="absolute top-4 right-4 text-white text-2xl z-10"
+                                >
+                                    ×
+                                </button>
+                                <video 
+                                    src={lightboxSrc}
+                                    controls 
+                                    autoPlay
+                                    className="max-w-full max-h-full"
+                                    onError={(e) => {
+                                        console.error('Lightbox视频加载错误:', e, 'src:', lightboxSrc);
+                                    }}
+                                    onLoadedData={() => {
+                                        console.log('Lightbox视频加载成功, src:', lightboxSrc);
+                                    }}
+                                >
+                                    您的浏览器不支持视频标签。
+                                </video>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+        
+        ReactDOM.render(<DebugTest />, document.getElementById('root'));
+    </script>
+</body>
+</html>
