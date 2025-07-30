@@ -728,10 +728,12 @@
 
                                                 return (
                 <div className="min-h-screen bg-gray-50 p-4 md:p-6 font-sans antialiased">
-                    <div className="max-w-7xl mx-auto bg-white p-4 md:p-8 relative overflow-hidden">
-
-
-                        <div className="absolute top-4 right-4 text-sm text-gray-600 font-medium text-right">
+                    <div className="max-w-7xl mx-auto bg-white relative">
+                        
+                        {/* 顶部控制栏 */}
+                        <div className="flex justify-between items-start p-4 md:p-8 pb-4">
+                            <div></div> {/* 左侧占位 */}
+                            <div className="text-sm text-gray-600 font-medium text-right">
                             <div className="flex flex-col items-end gap-2 mb-4">
                                 {/* 通知和今日内容按钮 */}
                                 <div className="flex gap-2 mb-2">
@@ -798,10 +800,14 @@
                                     </button>
                                 </div>
                             </div>
-                            {currentTime.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}
-                            <br />
-                            {currentTime.toLocaleTimeString('zh-CN')}
+                                {currentTime.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}
+                                <br />
+                                {currentTime.toLocaleTimeString('zh-CN')}
+                            </div>
                         </div>
+                        
+                        {/* 主要内容区域 */}
+                        <div className="px-4 md:px-8 pb-4 md:pb-8">
 
                         {message.text && (
                             <div className={`p-3 mb-4 rounded-lg text-center font-medium ${message.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
@@ -1057,7 +1063,9 @@
                             </div>
                         </div>
                     )}
-                </div>
+                        </div> {/* 关闭主要内容区域 */}
+                    </div> {/* 关闭主容器 */}
+                </div> {/* 关闭最外层容器 */}
             );
         };
 
