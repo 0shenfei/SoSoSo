@@ -58,22 +58,273 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2.39.0/dist/umd/supabase.js"></script>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
+        // Supabase配置 - 请替换为您的实际URL和Key
+        const SUPABASE_URL = 'YOUR_SUPABASE_URL'; // 替换为您的Supabase URL
+        const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // 替换为您的Supabase API Key
+        
+        // 初始化Supabase客户端
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        // 检查Supabase是否配置正确
+        const isSupabaseConfigured = SUPABASE_URL !== 'YOUR_SUPABASE_URL' && SUPABASE_ANON_KEY !== 'YOUR_SUPABASE_ANON_KEY';
+        
         // 图标组件
         const ChevronLeft = () => <span>‹</span>;
         const ChevronRight = () => <span>›</span>;
         const XCircle = () => <span>×</span>;
 
+        // Supabase数据服务
+        const SupabaseService = {
+            // 保存发布内容到云端
+            async savePosts(posts) {
+                if (!isSupabaseConfigured) return;
+                
+                try {
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (!user) return;
+
+                    // 转换数据格式
+                    const postsData = [];
+                    Object.entries(posts).forEach(([date, dayPosts]) => {
+                        dayPosts.forEach(post => {
+                            postsData.push({
+                                user_id: user.id,
+                                date,
+                                caption: post.caption || '',
+                                platforms: post.platforms || []
+                            });
+                        });
+                    });
+
+                    // 先删除现有数据，再插入新数据
+                    await supabase.from('posts').delete().eq('user_id', user.id);
+                    
+                    if (postsData.length > 0) {
+                        const { error } = await supabase.from('posts').insert(postsData);
+                        if (error) console.error('保存失败:', error);
+                    }
+                } catch (error) {
+                    console.error('Supabase保存错误:', error);
+                }
+            },
+
+            // 从云端加载发布内容
+            async loadPosts() {
+                if (!isSupabaseConfigured) return null;
+                
+                try {
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (!user) return null;
+
+                    const { data, error } = await supabase
+                        .from('posts')
+                        .select('*')
+                        .eq('user_id', user.id)
+                        .order('date', { ascending: true });
+
+                    if (error) {
+                        console.error('加载失败:', error);
+                        return null;
+                    }
+
+                    // 转换为原有格式
+                    const posts = {};
+                    data.forEach(post => {
+                        if (!posts[post.date]) posts[post.date] = [];
+                        posts[post.date].push({
+                            caption: post.caption,
+                            platforms: post.platforms,
+                            files: [] // 稍后处理文件
+                        });
+                    });
+
+                    return posts;
+                } catch (error) {
+                    console.error('Supabase加载错误:', error);
+                    return null;
+                }
+            },
+
+            // 用户认证
+            async signIn(email, password) {
+                const { data, error } = await supabase.auth.signInWithPassword({
+                    email, password
+                });
+                return { data, error };
+            },
+
+            async signUp(email, password) {
+                const { data, error } = await supabase.auth.signUp({
+                    email, password
+                });
+                return { data, error };
+            },
+
+            async signOut() {
+                const { error } = await supabase.auth.signOut();
+                return { error };
+            },
+
+            async getCurrentUser() {
+                const { data: { user } } = await supabase.auth.getUser();
+                return user;
+            }
+        };
+
+        // 认证模态框组件
+        const AuthModal = ({ showTemporaryMessage }) => {
+            const [showAuthModal, setShowAuthModal] = React.useState(false);
+            const [isSignUp, setIsSignUp] = React.useState(false);
+            const [email, setEmail] = React.useState('');
+            const [password, setPassword] = React.useState('');
+            const [loading, setLoading] = React.useState(false);
+
+            const handleAuth = async (e) => {
+                e.preventDefault();
+                setLoading(true);
+
+                try {
+                    if (isSignUp) {
+                        const { data, error } = await SupabaseService.signUp(email, password);
+                        if (error) {
+                            showTemporaryMessage(error.message, 'error');
+                        } else {
+                            showTemporaryMessage('注册成功！请检查邮箱验证链接。', 'success');
+                            setShowAuthModal(false);
+                        }
+                    } else {
+                        const { data, error } = await SupabaseService.signIn(email, password);
+                        if (error) {
+                            showTemporaryMessage(error.message, 'error');
+                        } else {
+                            showTemporaryMessage('登录成功！', 'success');
+                            setShowAuthModal(false);
+                        }
+                    }
+                } catch (error) {
+                    showTemporaryMessage('操作失败，请重试', 'error');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <>
+                    <button
+                        onClick={() => setShowAuthModal(true)}
+                        className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors"
+                    >
+                        登录/注册
+                    </button>
+
+                    {showAuthModal && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                            <div className="bg-white rounded-lg p-6 w-full max-w-md">
+                                <h2 className="text-xl font-bold mb-4 text-center">
+                                    {isSignUp ? '注册账号' : '登录账号'}
+                                </h2>
+                                
+                                <form onSubmit={handleAuth} className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                            邮箱
+                                        </label>
+                                        <input
+                                            type="email"
+                                            value={email}
+                                            onChange={(e) => setEmail(e.target.value)}
+                                            className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            required
+                                        />
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                            密码
+                                        </label>
+                                        <input
+                                            type="password"
+                                            value={password}
+                                            onChange={(e) => setPassword(e.target.value)}
+                                            className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            minLength="6"
+                                            required
+                                        />
+                                    </div>
+                                    
+                                    <div className="flex gap-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowAuthModal(false)}
+                                            className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition-colors"
+                                            disabled={loading}
+                                        >
+                                            取消
+                                        </button>
+                                        <button
+                                            type="submit"
+                                            className="flex-1 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors disabled:opacity-50"
+                                            disabled={loading}
+                                        >
+                                            {loading ? '处理中...' : (isSignUp ? '注册' : '登录')}
+                                        </button>
+                                    </div>
+                                </form>
+                                
+                                <div className="mt-4 text-center">
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsSignUp(!isSignUp)}
+                                        className="text-sm text-blue-600 hover:text-blue-800"
+                                        disabled={loading}
+                                    >
+                                        {isSignUp ? '已有账号？去登录' : '没有账号？去注册'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </>
+            );
+        };
+
         const App = () => {
             const [currentDate, setCurrentDate] = React.useState(new Date());
+            const [user, setUser] = React.useState(null);
+            const [isLoading, setIsLoading] = React.useState(true);
             const [scheduledPosts, setScheduledPosts] = React.useState(() => {
                 try {
                     const saved = localStorage.getItem('socialMediaCalendar');
-                    return saved ? JSON.parse(saved) : {};
+                    const data = saved ? JSON.parse(saved) : {};
+                    
+                    // 数据迁移：处理旧版本数据中的Blob URL问题
+                    Object.keys(data).forEach(dayKey => {
+                        if (data[dayKey] && Array.isArray(data[dayKey])) {
+                            data[dayKey].forEach(post => {
+                                if (post.files && Array.isArray(post.files)) {
+                                    post.files.forEach(file => {
+                                        // 如果originalDataUrl是blob URL，清除它，使用dataUrl
+                                        if (file.originalDataUrl && file.originalDataUrl.startsWith('blob:')) {
+                                            file.originalDataUrl = file.dataUrl;
+                                        }
+                                        // 确保视频文件有备用显示
+                                        if (file.type === 'video' && (!file.dataUrl || file.dataUrl.startsWith('blob:'))) {
+                                            file.dataUrl = file.thumbnail;
+                                            file.originalDataUrl = file.thumbnail;
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                    });
+                    
+                    return data;
                 } catch (error) {
                     console.error('加载数据失败:', error);
                     return {};
@@ -100,14 +351,70 @@
                 { name: '微信', url: 'https://mp.weixin.qq.com/' }
             ];
 
-            // 保存数据到localStorage
+            // 保存数据到localStorage和Supabase
             React.useEffect(() => {
                 try {
                     localStorage.setItem('socialMediaCalendar', JSON.stringify(scheduledPosts));
+                    
+                    // 如果用户已登录，同时保存到Supabase
+                    if (user && isSupabaseConfigured) {
+                        SupabaseService.savePosts(scheduledPosts);
+                    }
                 } catch (error) {
                     console.error('保存数据失败:', error);
                 }
-            }, [scheduledPosts]);
+            }, [scheduledPosts, user]);
+
+            // 初始化用户认证状态
+            React.useEffect(() => {
+                const initAuth = async () => {
+                    if (!isSupabaseConfigured) {
+                        setIsLoading(false);
+                        return;
+                    }
+
+                    try {
+                        const currentUser = await SupabaseService.getCurrentUser();
+                        setUser(currentUser);
+
+                        // 如果用户已登录，尝试从云端加载数据
+                        if (currentUser) {
+                            const cloudPosts = await SupabaseService.loadPosts();
+                            if (cloudPosts && Object.keys(cloudPosts).length > 0) {
+                                setScheduledPosts(cloudPosts);
+                                showTemporaryMessage('云端数据已同步', 'success');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('认证初始化失败:', error);
+                    } finally {
+                        setIsLoading(false);
+                    }
+                };
+
+                initAuth();
+
+                // 监听认证状态变化
+                if (isSupabaseConfigured) {
+                    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+                        async (event, session) => {
+                            setUser(session?.user || null);
+                            
+                            if (event === 'SIGNED_IN' && session?.user) {
+                                showTemporaryMessage('登录成功！正在同步数据...', 'success');
+                                const cloudPosts = await SupabaseService.loadPosts();
+                                if (cloudPosts) {
+                                    setScheduledPosts(cloudPosts);
+                                }
+                            } else if (event === 'SIGNED_OUT') {
+                                showTemporaryMessage('已退出登录', 'success');
+                            }
+                        }
+                    );
+
+                    return () => subscription.unsubscribe();
+                }
+            }, []);
 
             // 时间更新
             React.useEffect(() => {
@@ -373,6 +680,24 @@
                 });
             };
 
+            const compressVideo = (file) => {
+                return new Promise((resolve, reject) => {
+                    // 对于视频文件，我们检查大小
+                    const maxSize = 50 * 1024 * 1024; // 50MB限制
+                    
+                    if (file.size <= maxSize) {
+                        // 如果文件不大，直接转换为data URL
+                        const reader = new FileReader();
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.onerror = () => reject(new Error('视频读取失败'));
+                        reader.readAsDataURL(file);
+                    } else {
+                        // 如果文件太大，返回错误，让调用者使用缩略图
+                        reject(new Error('视频文件过大'));
+                    }
+                });
+            };
+
             const addMediaToDay = async () => {
                 if (selectedFiles.length === 0 && !captionInput.trim()) {
                     showTemporaryMessage('请上传图片/视频或输入文案。', 'error');
@@ -395,28 +720,37 @@
                         const filePromises = selectedFiles.map(async (file) => {
                             if (file.type.startsWith('image/')) {
                                 const compressedDataUrl = await compressImage(file);
+                                // 为了持久化，我们也将原图进行适当压缩存储
+                                const originalDataUrl = await compressImage(file, 2560, 0.9); // 更高质量的压缩
                                 return { 
                                     type: 'image', 
-                                    dataUrl: compressedDataUrl, 
-                                    originalDataUrl: URL.createObjectURL(file), 
+                                    dataUrl: compressedDataUrl,  // 用于日历预览的压缩版本
+                                    originalDataUrl: originalDataUrl, // 用于lightbox的高质量版本
                                     name: file.name, 
                                     size: file.size 
                                 };
                             } else if (file.type.startsWith('video/')) {
                                 try {
                                     const thumbnail = await createVideoThumbnail(file);
+                                    // 对于视频，我们存储缩略图，并尝试压缩原视频
+                                    const compressedVideo = await compressVideo(file);
                                     return { 
                                         type: 'video', 
-                                        thumbnail: thumbnail, 
-                                        originalDataUrl: URL.createObjectURL(file), 
+                                        thumbnail: thumbnail,
+                                        dataUrl: compressedVideo, // 压缩后的视频用于播放
+                                        originalDataUrl: compressedVideo, // 同样使用压缩版本
                                         name: file.name, 
                                         size: file.size, 
                                         isLargeFile: true 
                                     };
                                 } catch (error) {
+                                    // 如果视频压缩失败，只存储缩略图
+                                    const thumbnail = await createVideoThumbnail(file);
                                     return { 
                                         type: 'video', 
-                                        originalDataUrl: URL.createObjectURL(file), 
+                                        thumbnail: thumbnail,
+                                        dataUrl: thumbnail, // 使用缩略图作为fallback
+                                        originalDataUrl: thumbnail,
                                         name: file.name, 
                                         size: file.size, 
                                         isLargeFile: true 
@@ -529,55 +863,38 @@
                                                     );
                                                 } else {
                                                     return (
-                                                        <div className="w-full h-full cursor-pointer relative">
-                                                            <video
-                                                                src={currentFile.originalDataUrl}
-                                                                className="w-full h-full object-cover calendar-video"
-                                                                autoPlay
-                                                                muted
-                                                                loop
-                                                                playsInline
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    openLightbox({
-                                                                        ...currentFile,
-                                                                        dataUrl: currentFile.originalDataUrl,
-                                                                        caption: postsForDay[0].caption,
-                                                                        allFiles: postsForDay[0].files,
-                                                                        currentIndex: currentFileIndex
-                                                                    });
-                                                                }}
-                                                                onError={(e) => {
-                                                                    // 如果视频加载失败，显示缩略图
-                                                                    e.target.style.display = 'none';
-                                                                    const fallback = e.target.nextElementSibling;
-                                                                    if (fallback) fallback.style.display = 'block';
-                                                                }}
-                                                            />
-                                                            {/* 视频加载失败时的备用显示 */}
-                                                            <div 
-                                                                className="w-full h-full absolute top-0 left-0"
-                                                                style={{display: 'none'}}
-                                                                onClick={() => openLightbox({
-                                                                    ...currentFile,
-                                                                    dataUrl: currentFile.originalDataUrl,
-                                                                    caption: postsForDay[0].caption,
-                                                                    allFiles: postsForDay[0].files,
-                                                                    currentIndex: currentFileIndex
-                                                                })}
-                                                            >
-                                                                {currentFile.thumbnail ? (
-                                                                    <img
-                                                                        src={currentFile.thumbnail}
-                                                                        alt="视频缩略图"
-                                                                        className="w-full h-full object-cover"
-                                                                    />
-                                                                ) : (
-                                                                    <div className="w-full h-full bg-gray-200 flex items-center justify-center">
-                                                                        <span className="text-4xl">🎥</span>
-                                                                    </div>
-                                                                )}
-                                                            </div>
+                                                        <div 
+                                                            className="w-full h-full cursor-pointer"
+                                                            onClick={() => openLightbox({
+                                                                ...currentFile,
+                                                                dataUrl: currentFile.originalDataUrl || currentFile.dataUrl,
+                                                                caption: postsForDay[0].caption,
+                                                                allFiles: postsForDay[0].files,
+                                                                currentIndex: currentFileIndex
+                                                            })}
+                                                        >
+                                                            {/* 优先显示视频，如果有完整视频数据 */}
+                                                            {currentFile.dataUrl && currentFile.dataUrl.startsWith('data:video/') ? (
+                                                                <video
+                                                                    src={currentFile.dataUrl}
+                                                                    className="w-full h-full object-cover calendar-video"
+                                                                    autoPlay
+                                                                    muted
+                                                                    loop
+                                                                    playsInline
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                />
+                                                            ) : currentFile.thumbnail ? (
+                                                                <img
+                                                                    src={currentFile.thumbnail}
+                                                                    alt="视频缩略图"
+                                                                    className="w-full h-full object-cover"
+                                                                />
+                                                            ) : (
+                                                                <div className="w-full h-full bg-gray-200 flex items-center justify-center">
+                                                                    <span className="text-4xl">🎥</span>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     );
                                                 }
@@ -635,7 +952,42 @@
                         
                         {/* 顶部控制栏 */}
                         <div className="flex justify-between items-start p-4 md:p-8 pb-4">
-                            <div></div>
+                            {/* 左侧：Supabase状态和认证 */}
+                            <div className="text-sm text-gray-600">
+                                {isSupabaseConfigured ? (
+                                    <div className="flex items-center gap-4">
+                                        {user ? (
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-green-600">🟢</span>
+                                                <span>云端同步已开启</span>
+                                                <button
+                                                    onClick={async () => {
+                                                        await SupabaseService.signOut();
+                                                    }}
+                                                    className="text-xs px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 transition-colors"
+                                                >
+                                                    退出
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-orange-600">🟡</span>
+                                                <span>本地存储</span>
+                                                <AuthModal showTemporaryMessage={showTemporaryMessage} />
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-gray-400">⚫</span>
+                                        <span className="text-xs text-gray-500">
+                                            本地模式（需配置Supabase启用云端同步）
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                            
+                            {/* 右侧：现有控制按钮 */}
                             <div className="text-sm text-gray-600 font-medium text-right">
                                 <div className="flex flex-col items-end gap-2 mb-4">
                                     {/* 今日内容快速发布按钮 */}
@@ -882,16 +1234,40 @@
                                                     />
                                                 );
                                             } else if (currentMedia.type === 'video') {
-                                                return (
-                                                    <video
-                                                        src={currentMedia.originalDataUrl || currentMedia.dataUrl}
-                                                        controls
-                                                        autoPlay
-                                                        className="max-w-full max-h-full object-contain rounded-lg"
-                                                    >
-                                                        您的浏览器不支持视频标签。
-                                                    </video>
-                                                );
+                                                // 优先使用dataUrl（如果是完整视频），否则使用originalDataUrl，最后使用thumbnail
+                                                const videoSrc = (currentMedia.dataUrl && currentMedia.dataUrl.startsWith('data:video/')) 
+                                                    ? currentMedia.dataUrl 
+                                                    : currentMedia.originalDataUrl || currentMedia.thumbnail;
+                                                
+                                                if (videoSrc && (videoSrc.startsWith('data:video/') || videoSrc.startsWith('blob:'))) {
+                                                    return (
+                                                        <video
+                                                            src={videoSrc}
+                                                            controls
+                                                            autoPlay
+                                                            className="max-w-full max-h-full object-contain rounded-lg"
+                                                        >
+                                                            您的浏览器不支持视频标签。
+                                                        </video>
+                                                    );
+                                                } else {
+                                                    // 如果没有有效的视频源，显示缩略图
+                                                    return (
+                                                        <div className="flex flex-col items-center justify-center text-gray-400">
+                                                            {currentMedia.thumbnail ? (
+                                                                <img
+                                                                    src={currentMedia.thumbnail}
+                                                                    alt="视频缩略图"
+                                                                    className="max-w-full max-h-full object-contain rounded-lg mb-4"
+                                                                />
+                                                            ) : (
+                                                                <div className="text-8xl mb-4">🎥</div>
+                                                            )}
+                                                            <p className="text-lg">视频预览不可用</p>
+                                                            <p className="text-sm">文件：{currentMedia.name}</p>
+                                                        </div>
+                                                    );
+                                                }
                                             } else {
                                                 return (
                                                     <div className="flex items-center justify-center text-gray-400 text-xl">
