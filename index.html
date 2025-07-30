@@ -633,13 +633,35 @@
                                     Object.entries(cloudPosts).forEach(([date, cloudDayPosts]) => {
                                         cloudDayPosts.forEach((cloudPost, index) => {
                                             if (mergedPosts[date] && mergedPosts[date][index]) {
-                                                // 保留本地文件，更新云端文案
+                                                // 智能合并：优先保留有更多数据的文件
                                                 const localFiles = mergedPosts[date][index].files || [];
                                                 const cloudFiles = cloudPost.files || [];
                                                 
+                                                // 如果本地文件有原始File对象或更完整的数据，优先保留
+                                                const shouldKeepLocal = localFiles.some(f => f.file || f.dataUrl?.startsWith('data:') || f.originalDataUrl?.startsWith('data:'));
+                                                const shouldKeepCloud = cloudFiles.some(f => f.cloudUrl || f.uploaded);
+                                                
+                                                let finalFiles = localFiles;
+                                                if (!shouldKeepLocal && shouldKeepCloud) {
+                                                    finalFiles = cloudFiles;
+                                                } else if (shouldKeepLocal && shouldKeepCloud) {
+                                                    // 合并：使用本地数据但更新云端URL
+                                                    finalFiles = localFiles.map((localFile, fileIndex) => {
+                                                        const cloudFile = cloudFiles[fileIndex];
+                                                        if (cloudFile && cloudFile.cloudUrl) {
+                                                            return {
+                                                                ...localFile,
+                                                                cloudUrl: cloudFile.cloudUrl,
+                                                                uploaded: true
+                                                            };
+                                                        }
+                                                        return localFile;
+                                                    });
+                                                }
+                                                
                                                 mergedPosts[date][index] = {
                                                     ...cloudPost,
-                                                    files: localFiles.length > 0 ? localFiles : cloudFiles
+                                                    files: finalFiles
                                                 };
                                             } else {
                                                 // 新的云端数据
@@ -682,13 +704,35 @@
                                         Object.entries(cloudPosts).forEach(([date, cloudDayPosts]) => {
                                             cloudDayPosts.forEach((cloudPost, index) => {
                                                 if (mergedPosts[date] && mergedPosts[date][index]) {
-                                                    // 保留本地文件，更新云端文案
+                                                    // 智能合并：优先保留有更多数据的文件
                                                     const localFiles = mergedPosts[date][index].files || [];
                                                     const cloudFiles = cloudPost.files || [];
                                                     
+                                                    // 如果本地文件有原始File对象或更完整的数据，优先保留
+                                                    const shouldKeepLocal = localFiles.some(f => f.file || f.dataUrl?.startsWith('data:') || f.originalDataUrl?.startsWith('data:'));
+                                                    const shouldKeepCloud = cloudFiles.some(f => f.cloudUrl || f.uploaded);
+                                                    
+                                                    let finalFiles = localFiles;
+                                                    if (!shouldKeepLocal && shouldKeepCloud) {
+                                                        finalFiles = cloudFiles;
+                                                    } else if (shouldKeepLocal && shouldKeepCloud) {
+                                                        // 合并：使用本地数据但更新云端URL
+                                                        finalFiles = localFiles.map((localFile, fileIndex) => {
+                                                            const cloudFile = cloudFiles[fileIndex];
+                                                            if (cloudFile && cloudFile.cloudUrl) {
+                                                                return {
+                                                                    ...localFile,
+                                                                    cloudUrl: cloudFile.cloudUrl,
+                                                                    uploaded: true
+                                                                };
+                                                            }
+                                                            return localFile;
+                                                        });
+                                                    }
+                                                    
                                                     mergedPosts[date][index] = {
                                                         ...cloudPost,
-                                                        files: localFiles.length > 0 ? localFiles : cloudFiles
+                                                        files: finalFiles
                                                     };
                                                 } else {
                                                     // 新的云端数据
@@ -1155,7 +1199,8 @@
                                                             className="cursor-pointer"
                                                             onClick={() => openLightbox({
                                                                 ...currentFile,
-                                                                dataUrl: currentFile.originalDataUrl || currentFile.dataUrl,
+                                                                // 对于图片，使用高质量的originalDataUrl或cloudUrl
+                                                                dataUrl: currentFile.cloudUrl || currentFile.originalDataUrl || currentFile.dataUrl,
                                                                 caption: postsForDay[0].caption,
                                                                 allFiles: postsForDay[0].files,
                                                                 currentIndex: currentFileIndex
@@ -1168,7 +1213,8 @@
                                                             className="w-full h-full cursor-pointer"
                                                             onClick={() => openLightbox({
                                                                 ...currentFile,
-                                                                dataUrl: currentFile.originalDataUrl || currentFile.dataUrl,
+                                                                // 对于视频，保持cloudUrl用于播放
+                                                                dataUrl: currentFile.cloudUrl || currentFile.originalDataUrl || currentFile.dataUrl,
                                                                 caption: postsForDay[0].caption,
                                                                 allFiles: postsForDay[0].files,
                                                                 currentIndex: currentFileIndex
