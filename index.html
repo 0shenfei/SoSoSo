@@ -102,13 +102,16 @@
             
             // 视频压缩配置
             VIDEO_COMPRESSION: {
+                autoCompress: true,                 // 启用视频自动压缩
+                maxSizeMB: 10,                     // 自动压缩阈值：10MB
+                targetSizeMB: 2,                   // 目标大小：2MB
                 maxWidth: 1280,                     // 视频最大宽度
                 maxHeight: 720,                     // 视频最大高度
-                bitrate: 1000000,                   // 目标码率 1Mbps
+                bitrate: 800000,                    // 目标码率 0.8Mbps (降低以达到2MB目标)
                 frameRate: 24,                      // 目标帧率
-                targetSizeMB: 15,                   // 目标文件大小
+                quality: 0.75,                      // 压缩质量 (稍微降低)
                 skipCompressionSizeMB: 3,           // 跳过压缩的最小大小
-                quality: 0.8                        // 压缩质量
+                format: 'video/webm;codecs=vp9'     // 输出格式
             },
             
             // 存储策略
@@ -154,7 +157,22 @@
                     };
                 }
                 
-                // 🎥 视频压缩策略：压缩后直接上传云端
+                // 🎥 视频智能压缩策略：超过10MB自动压缩到2MB
+                if (isVideo && STORAGE_CONFIG.VIDEO_COMPRESSION.autoCompress && 
+                    fileSizeMB > STORAGE_CONFIG.VIDEO_COMPRESSION.maxSizeMB) {
+                    return {
+                        storeLocal: false,        // 不存储在本地
+                        storeCloud: true,         // 直接上传云端
+                        needsCompression: true,   // 需要压缩
+                        createThumbnail: true,    // 生成缩略图
+                        uploadCompressed: true,   // 标记为压缩后上传
+                        localThumbnailOnly: true, // 本地只保存缩略图
+                        autoVideoCompress: true,  // 智能视频压缩标记
+                        targetSize: STORAGE_CONFIG.VIDEO_COMPRESSION.targetSizeMB
+                    };
+                }
+                
+                // 🎬 传统视频压缩策略：大文件压缩后上传云端
                 if (isVideo && isLargeFile && STORAGE_CONFIG.AUTO_VIDEO_COMPRESSION) {
                     return {
                         storeLocal: false,        // 不存储在本地
@@ -216,10 +234,18 @@
                         const startTime = Date.now();
                         console.log(`🚀 视频将压缩后直接上传云端: ${file.name}`);
                         
-                        result.compressedBlob = await this.compressFileToBlob(file);
+                        result.compressedBlob = await this.compressFileToBlob(file, strategy);
                         result.isCompressed = true;
                         result.compressionTime = Date.now() - startTime;
                         result.compressedSize = (result.compressedBlob.size / 1024 / 1024).toFixed(1) + 'MB';
+                        
+                        // 特殊标记智能视频压缩
+                        if (strategy.autoVideoCompress) {
+                            result.autoVideoCompressed = true;
+                            result.targetSizeMB = strategy.targetSize;
+                            const compressionRatio = ((1 - result.compressedBlob.size / file.size) * 100).toFixed(1);
+                            console.log(`🎥 智能视频压缩: ${file.name}, 压缩率: ${compressionRatio}%`);
+                        }
                         
                         // 本地只保存缩略图，用于预览
                         result.dataUrl = result.thumbnail;
@@ -378,12 +404,17 @@
             }
 
             // 🗜️ 压缩文件到Blob（用于云端上传）
-            async compressFileToBlob(file) {
+            async compressFileToBlob(file, strategy = null) {
                 if (file.type.startsWith('image/')) {
                     const dataUrl = await this.compressImage(file);
                     return this.dataUrlToBlob(dataUrl);
                 } else if (file.type.startsWith('video/')) {
-                    return this.compressVideoToBlob(file);
+                    // 🎯 智能视频压缩
+                    if (strategy && strategy.autoVideoCompress) {
+                        return this.compressVideoToTargetSize(file, strategy.targetSize);
+                    } else {
+                        return this.compressVideoToBlob(file);
+                    }
                 }
                 return file;
             }
@@ -611,6 +642,82 @@
                     console.warn('MediaRecorder压缩失败，返回原文件:', error);
                     return file;
                 }
+            }
+
+            // 🎯 智能视频压缩到目标大小
+            async compressVideoToTargetSize(file, targetSizeMB = 2) {
+                console.log(`🎥 开始智能压缩视频: ${file.name}, 原始大小: ${(file.size / 1024 / 1024).toFixed(2)}MB → 目标: ${targetSizeMB}MB`);
+                
+                const config = STORAGE_CONFIG.VIDEO_COMPRESSION;
+                const targetSizeBytes = targetSizeMB * 1024 * 1024;
+                
+                // 如果文件已经小于目标大小，直接返回
+                if (file.size <= targetSizeBytes) {
+                    console.log('📁 视频已经符合目标大小，跳过压缩');
+                    return file;
+                }
+                
+                // 计算需要的压缩比率
+                const compressionRatio = targetSizeBytes / file.size;
+                console.log(`📊 需要压缩比率: ${(compressionRatio * 100).toFixed(1)}%`);
+                
+                // 动态调整压缩参数
+                let adjustedConfig = { ...config };
+                
+                if (compressionRatio < 0.3) {
+                    // 需要高度压缩 (压缩到30%以下)
+                    adjustedConfig.bitrate = Math.max(300000, config.bitrate * 0.4); // 最低300kbps
+                    adjustedConfig.maxWidth = Math.min(854, config.maxWidth * 0.8);   // 降低分辨率
+                    adjustedConfig.maxHeight = Math.min(480, config.maxHeight * 0.8);
+                    adjustedConfig.frameRate = Math.max(15, config.frameRate * 0.7);  // 降低帧率
+                    adjustedConfig.quality = Math.max(0.5, config.quality * 0.7);     // 降低质量
+                    console.log('🔥 启用高度压缩模式');
+                } else if (compressionRatio < 0.6) {
+                    // 需要中度压缩 (压缩到30-60%)
+                    adjustedConfig.bitrate = Math.max(500000, config.bitrate * 0.6);
+                    adjustedConfig.maxWidth = Math.min(1024, config.maxWidth * 0.9);
+                    adjustedConfig.maxHeight = Math.min(576, config.maxHeight * 0.9);
+                    adjustedConfig.frameRate = Math.max(18, config.frameRate * 0.8);
+                    adjustedConfig.quality = Math.max(0.6, config.quality * 0.8);
+                    console.log('⚡ 启用中度压缩模式');
+                } else {
+                    // 轻度压缩 (压缩到60%以上)
+                    adjustedConfig.bitrate = Math.max(600000, config.bitrate * 0.8);
+                    adjustedConfig.quality = Math.max(0.7, config.quality * 0.9);
+                    console.log('💫 启用轻度压缩模式');
+                }
+                
+                console.log('🎛️ 调整后的压缩参数:', {
+                    bitrate: `${(adjustedConfig.bitrate / 1000).toFixed(0)}kbps`,
+                    resolution: `${adjustedConfig.maxWidth}x${adjustedConfig.maxHeight}`,
+                    frameRate: `${adjustedConfig.frameRate}fps`,
+                    quality: adjustedConfig.quality
+                });
+                
+                try {
+                    const compressedBlob = await this.compressVideoWithMediaRecorder(file, adjustedConfig);
+                    
+                    if (compressedBlob) {
+                        const finalSizeMB = compressedBlob.size / (1024 * 1024);
+                        const actualCompressionRatio = ((1 - compressedBlob.size / file.size) * 100).toFixed(1);
+                        
+                        console.log(`🎯 视频压缩完成: ${file.name}, ${(file.size / 1024 / 1024).toFixed(2)}MB → ${finalSizeMB.toFixed(2)}MB (压缩率: ${actualCompressionRatio}%)`);
+                        
+                        if (finalSizeMB <= targetSizeMB * 1.1) { // 允许10%的误差
+                            console.log('✅ 成功达到目标大小');
+                            return compressedBlob;
+                        } else {
+                            console.log(`⚠️ 未完全达到目标大小，但已显著压缩 (目标: ${targetSizeMB}MB, 实际: ${finalSizeMB.toFixed(2)}MB)`);
+                            return compressedBlob;
+                        }
+                    }
+                } catch (error) {
+                    console.error('智能视频压缩失败:', error);
+                }
+                
+                // 如果压缩失败，返回原文件
+                console.log('🔄 压缩失败，返回原文件');
+                return file;
             }
 
             // 📄 Blob转DataURL
@@ -2401,7 +2508,9 @@
                                 console.log(`📂 处理文件 ${index + 1}/${selectedFiles.length}: ${file.name}`);
                                 
                                 // 📸🎬 显示压缩进度
-                                if (file.type.startsWith('video/') && file.size > 3 * 1024 * 1024) {
+                                if (file.type.startsWith('video/') && file.size > 10 * 1024 * 1024) {
+                                    showTemporaryMessage(`🎯 正在智能压缩大视频: ${file.name}...`, 'info');
+                                } else if (file.type.startsWith('video/') && file.size > 3 * 1024 * 1024) {
                                     showTemporaryMessage(`🎬 正在压缩视频: ${file.name}...`, 'info');
                                 } else if (file.type.startsWith('image/') && file.size > 5 * 1024 * 1024) {
                                     showTemporaryMessage(`📸 正在智能压缩大图片: ${file.name}...`, 'info');
@@ -2415,7 +2524,14 @@
                                     const compressedSize = processedFile.compressedSize || '未知';
                                     
                                     if (file.type.startsWith('video/')) {
-                                        if (processedFile.uploadCompressed) {
+                                        if (processedFile.autoVideoCompressed) {
+                                            // 🎥 智能视频压缩反馈
+                                            const compressionRatio = ((1 - parseFloat(compressedSize) / parseFloat(originalSize)) * 100).toFixed(1);
+                                            showTemporaryMessage(
+                                                `🎯 视频智能压缩完成: ${originalSize}MB → ${compressedSize} (压缩率${compressionRatio}%)`, 
+                                                'success'
+                                            );
+                                        } else if (processedFile.uploadCompressed) {
                                             showTemporaryMessage(`🚀 视频压缩完成，将直传云端: ${originalSize}MB → ${compressedSize}`, 'success');
                                         } else {
                                             showTemporaryMessage(`✅ 视频压缩完成: ${originalSize}MB → ${compressedSize}`, 'success');
