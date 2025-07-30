@@ -84,8 +84,8 @@
 
         // Supabase数据服务
         const SupabaseService = {
-            // 上传文件到Supabase Storage
-            async uploadFile(file, fileName, userId) {
+            // 上传文件到Supabase Storage (支持进度回调)
+            async uploadFile(file, fileName, userId, progressCallback = null) {
                 try {
                     // 验证文件
                     if (!file || !fileName || !userId) {
@@ -96,17 +96,67 @@
                     const fileExt = fileName.split('.').pop();
                     const filePath = `${userId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
                     
-                    console.log(`开始上传文件: ${fileName}, 大小: ${file.size} bytes`);
+                    if (DEBUG_MODE) console.log(`开始上传文件: ${fileName}, 大小: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
                     
-                    const { data, error } = await supabase.storage
-                        .from('media-files')
-                        .upload(filePath, file, {
-                            cacheControl: '3600',
-                            upsert: false
+                    // 对于大文件，显示上传进度
+                    if (progressCallback) {
+                        progressCallback(0, fileName);
+                    }
+
+                    // 创建一个包装的文件对象来模拟进度
+                    let uploadPromise;
+                    
+                    if (file.size > 1024 * 1024) { // 大于1MB的文件显示进度
+                        // 创建模拟进度的Promise
+                        uploadPromise = new Promise(async (resolve, reject) => {
+                            try {
+                                // 模拟上传进度
+                                const progressInterval = setInterval(() => {
+                                    if (progressCallback) {
+                                        const randomProgress = Math.min(90, Math.random() * 80 + 10);
+                                        progressCallback(randomProgress, fileName);
+                                    }
+                                }, 500);
+
+                                const { data, error } = await supabase.storage
+                                    .from('media-files')
+                                    .upload(filePath, file, {
+                                        cacheControl: '3600',
+                                        upsert: false
+                                    });
+
+                                clearInterval(progressInterval);
+                                
+                                if (progressCallback) {
+                                    progressCallback(100, fileName);
+                                }
+
+                                if (error) {
+                                    reject(error);
+                                } else {
+                                    resolve({ data, error });
+                                }
+                            } catch (err) {
+                                reject(err);
+                            }
                         });
+                    } else {
+                        // 小文件直接上传
+                        uploadPromise = supabase.storage
+                            .from('media-files')
+                            .upload(filePath, file, {
+                                cacheControl: '3600',
+                                upsert: false
+                            });
+                    }
+
+                    const { data, error } = await uploadPromise;
 
                     if (error) {
                         console.error('文件上传失败:', error);
+                        if (progressCallback) {
+                            progressCallback(-1, fileName, error.message);
+                        }
                         return null;
                     }
 
@@ -115,17 +165,20 @@
                         .from('media-files')
                         .getPublicUrl(filePath);
 
-                                    console.log(`文件上传成功: ${fileName} -> ${publicUrl}`);
+                    if (DEBUG_MODE) console.log(`文件上传成功: ${fileName} -> ${publicUrl}`);
 
-                return {
-                    filePath: filePath,
-                    publicUrl: publicUrl,
-                    fileName: fileName,
-                    fileSize: file.size,
-                    fileType: file.type
-                };
+                    return {
+                        filePath: filePath,
+                        publicUrl: publicUrl,
+                        fileName: fileName,
+                        fileSize: file.size,
+                        fileType: file.type
+                    };
                 } catch (error) {
                     console.error('上传文件错误:', error);
+                    if (progressCallback) {
+                        progressCallback(-1, fileName, error.message);
+                    }
                     return null;
                 }
             },
@@ -173,7 +226,7 @@
             },
 
             // 保存发布内容到云端（包含文件上传）
-            async savePosts(posts) {
+            async savePosts(posts, progressCallback = null) {
                 if (!isSupabaseConfigured) return;
                 
                 try {
@@ -200,7 +253,7 @@
                                             if (fileData.file && !fileData.cloudUrl && !fileData.uploaded) {
                                                 // 尝试上传新文件
                                                 if (DEBUG_MODE) console.log(`尝试上传文件: ${fileData.name}`);
-                                                const uploadResult = await this.uploadFile(fileData.file, fileData.name, user.id);
+                                                const uploadResult = await this.uploadFile(fileData.file, fileData.name, user.id, progressCallback);
                                                 
                                                 if (uploadResult) {
                                                     uploadedFiles.push({
@@ -576,6 +629,8 @@
             const [carouselIndices, setCarouselIndices] = React.useState({});
             const [notificationsEnabled, setNotificationsEnabled] = React.useState(false);
             const [uploadProgress, setUploadProgress] = React.useState({});
+            const [isUploading, setIsUploading] = React.useState(false);
+            const [uploadStatus, setUploadStatus] = React.useState('');
             const [currentLightboxIndex, setCurrentLightboxIndex] = React.useState(0);
 
             const platforms = [
@@ -595,12 +650,40 @@
                     // 如果用户已登录，同时保存到Supabase（延迟执行避免阻塞）
                     if (user && isSupabaseConfigured) {
                         setTimeout(() => {
-                            showTemporaryMessage('正在同步到云端...', 'info');
+                            // 检查是否有新文件需要上传
+                            const hasNewFiles = Object.values(scheduledPosts).some(dayPosts =>
+                                dayPosts.some(post => 
+                                    post.files && post.files.some(file => file.file && !file.uploaded)
+                                )
+                            );
+
+                            if (hasNewFiles) {
+                                setIsUploading(true);
+                                setUploadStatus('准备上传文件...');
+                                showTemporaryMessage('正在上传文件到云端...', 'info');
+                            } else {
+                                showTemporaryMessage('正在同步到云端...', 'info');
+                            }
                             
-                            SupabaseService.savePosts(scheduledPosts).then(() => {
+                            SupabaseService.savePosts(scheduledPosts, (progress, fileName, error) => {
+                                if (error) {
+                                    setUploadStatus(`上传失败: ${fileName}`);
+                                } else if (progress === 100) {
+                                    setUploadStatus(`上传完成: ${fileName}`);
+                                } else if (progress >= 0) {
+                                    setUploadStatus(`上传中: ${fileName} (${progress.toFixed(0)}%)`);
+                                    setUploadProgress(prev => ({ ...prev, [fileName]: progress }));
+                                }
+                            }).then(() => {
+                                setIsUploading(false);
+                                setUploadStatus('');
+                                setUploadProgress({});
                                 showTemporaryMessage('云端同步完成！', 'success');
                             }).catch((error) => {
                                 console.error('云端同步错误:', error);
+                                setIsUploading(false);
+                                setUploadStatus('');
+                                setUploadProgress({});
                                 showTemporaryMessage('云端同步失败，数据已保存在本地', 'warning');
                             });
                         }, 100); // 延迟100ms执行
@@ -1163,6 +1246,14 @@
                                 {postsForDay.length > 0 ? (
                                     postsForDay[0].files && postsForDay[0].files.length > 0 ? (
                                         <div className="relative group media-container">
+                                            {/* 文件上传状态指示器 */}
+                                            {isUploading && postsForDay[0].files.some(file => file.file && !file.uploaded) && (
+                                                <div className="absolute top-1 left-1 z-30 bg-blue-500 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
+                                                    <div className="animate-spin rounded-full h-2 w-2 border border-white border-t-transparent"></div>
+                                                    <span>上传中</span>
+                                                </div>
+                                            )}
+                                            
                                             <button
                                                 onClick={() => removeMedia(currentDay, 0)}
                                                 className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity bg-blue-500 text-white rounded-full p-1 shadow-md hover:bg-blue-600"
@@ -1332,6 +1423,42 @@
                 <div className="min-h-screen bg-gray-50 p-4 md:p-6 font-sans antialiased">
                     <div className="max-w-7xl mx-auto bg-white relative">
                         
+                        {/* 上传进度提示 */}
+                        {isUploading && (
+                            <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 bg-white border border-blue-200 rounded-lg shadow-lg p-4 min-w-80">
+                                <div className="flex items-center gap-3">
+                                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                                    <div className="flex-1">
+                                        <div className="text-sm font-medium text-gray-900 mb-1">
+                                            正在上传文件到云端
+                                        </div>
+                                        <div className="text-xs text-gray-600">
+                                            {uploadStatus || '准备中...'}
+                                        </div>
+                                        {/* 进度条 */}
+                                        {Object.keys(uploadProgress).length > 0 && (
+                                            <div className="mt-2">
+                                                {Object.entries(uploadProgress).map(([fileName, progress]) => (
+                                                    <div key={fileName} className="mb-1">
+                                                        <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                                            <span className="truncate max-w-32">{fileName}</span>
+                                                            <span>{progress.toFixed(0)}%</span>
+                                                        </div>
+                                                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                                                            <div 
+                                                                className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" 
+                                                                style={{ width: `${progress}%` }}
+                                                            ></div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {/* 顶部控制栏 */}
                         <div className="flex justify-between items-start p-4 md:p-8 pb-4">
                             {/* 左侧：Supabase状态和认证 */}
