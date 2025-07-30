@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频测试 - 简单版本</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const App = () => {
+            const [selectedFile, setSelectedFile] = React.useState(null);
+            const [videoData, setVideoData] = React.useState(null);
+            const [showLightbox, setShowLightbox] = React.useState(false);
+
+            const handleFileChange = (event) => {
+                const file = event.target.files[0];
+                if (file && file.type.startsWith('video/')) {
+                    console.log('选择的文件:', file.name, file.size);
+                    setSelectedFile(file);
+                    
+                    // 直接转换为DataURL
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const dataUrl = e.target.result;
+                        console.log('视频转换成功:', dataUrl.substring(0, 50) + '...');
+                        setVideoData({
+                            name: file.name,
+                            size: file.size,
+                            dataUrl: dataUrl
+                        });
+                    };
+                    reader.onerror = (e) => {
+                        console.error('读取失败:', e);
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    alert('请选择视频文件');
+                }
+            };
+
+            const openLightbox = () => {
+                console.log('打开Lightbox，视频数据:', videoData);
+                setShowLightbox(true);
+            };
+
+            return (
+                <div style={{ padding: '20px', fontFamily: 'Arial' }}>
+                    <h1>视频上传测试 - 极简版本</h1>
+                    
+                    <div style={{ marginBottom: '20px' }}>
+                        <input 
+                            type="file" 
+                            accept="video/*" 
+                            onChange={handleFileChange}
+                            style={{ marginBottom: '10px' }}
+                        />
+                        <br />
+                        <small>选择一个视频文件，会直接转换为DataURL存储</small>
+                    </div>
+
+                    {videoData && (
+                        <div style={{ marginBottom: '20px', border: '1px solid #ccc', padding: '10px' }}>
+                            <h3>上传成功！</h3>
+                            <p>文件名: {videoData.name}</p>
+                            <p>大小: {(videoData.size / 1024 / 1024).toFixed(2)} MB</p>
+                            
+                            <div style={{ marginTop: '10px' }}>
+                                <h4>预览（小窗口）:</h4>
+                                <video 
+                                    src={videoData.dataUrl} 
+                                    style={{ width: '200px', height: '150px' }}
+                                    controls
+                                    muted
+                                />
+                            </div>
+                            
+                            <button 
+                                onClick={openLightbox}
+                                style={{ 
+                                    marginTop: '10px', 
+                                    padding: '10px 20px', 
+                                    backgroundColor: '#007bff', 
+                                    color: 'white', 
+                                    border: 'none', 
+                                    borderRadius: '5px',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                点击放大查看 (Lightbox)
+                            </button>
+                        </div>
+                    )}
+
+                    {/* 简单的Lightbox */}
+                    {showLightbox && videoData && (
+                        <div 
+                            style={{
+                                position: 'fixed',
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                backgroundColor: 'rgba(0,0,0,0.9)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                zIndex: 1000
+                            }}
+                            onClick={() => setShowLightbox(false)}
+                        >
+                            <div onClick={(e) => e.stopPropagation()}>
+                                <button 
+                                    onClick={() => setShowLightbox(false)}
+                                    style={{
+                                        position: 'absolute',
+                                        top: '20px',
+                                        right: '20px',
+                                        backgroundColor: 'white',
+                                        border: 'none',
+                                        borderRadius: '50%',
+                                        width: '40px',
+                                        height: '40px',
+                                        fontSize: '20px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    ×
+                                </button>
+                                
+                                <h3 style={{ color: 'white', textAlign: 'center' }}>
+                                    Lightbox 视频播放测试
+                                </h3>
+                                
+                                <video 
+                                    src={videoData.dataUrl}
+                                    style={{ 
+                                        maxWidth: '90vw', 
+                                        maxHeight: '80vh' 
+                                    }}
+                                    controls
+                                    autoPlay
+                                />
+                                
+                                <div style={{ color: 'white', textAlign: 'center', marginTop: '10px' }}>
+                                    <p>文件: {videoData.name}</p>
+                                    <p>DataURL长度: {videoData.dataUrl.length.toLocaleString()} 字符</p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div style={{ marginTop: '30px', padding: '10px', backgroundColor: '#f5f5f5' }}>
+                        <h4>测试说明:</h4>
+                        <ol>
+                            <li>选择一个视频文件</li>
+                            <li>文件会直接转换为DataURL (data:video/...)</li>
+                            <li>在预览窗口中应该能播放</li>
+                            <li>点击"放大查看"按钮打开Lightbox</li>
+                            <li>在Lightbox中应该能正常播放</li>
+                        </ol>
+                        <p><strong>如果这个简单版本都不能工作，说明是浏览器或文件问题。</strong></p>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
