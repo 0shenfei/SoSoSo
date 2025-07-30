@@ -88,6 +88,18 @@
             VIDEO_QUALITY: 0.7,                     // 视频压缩质量
             THUMBNAIL_SIZE: 200,                    // 缩略图尺寸
             
+            // 图片自动压缩配置
+            IMAGE_COMPRESSION: {
+                autoCompress: true,                  // 启用图片自动压缩
+                maxSizeMB: 5,                       // 自动压缩阈值：5MB
+                targetSizeMB: 1,                    // 目标大小：1MB
+                maxWidth: 1920,                     // 最大宽度
+                maxHeight: 1920,                    // 最大高度
+                quality: 0.85,                      // 压缩质量
+                progressive: true,                  // 渐进式JPEG
+                format: 'image/jpeg'                // 输出格式
+            },
+            
             // 视频压缩配置
             VIDEO_COMPRESSION: {
                 maxWidth: 1280,                     // 视频最大宽度
@@ -123,13 +135,27 @@
             // 🔍 检测文件存储策略
             determineStorageStrategy(file) {
                 const fileSize = file.size;
+                const fileSizeMB = fileSize / (1024 * 1024);
                 const isLargeFile = fileSize > STORAGE_CONFIG.MAX_LOCAL_FILE_SIZE;
                 const isHugeFile = fileSize > STORAGE_CONFIG.MAX_CLOUD_FILE_SIZE;
                 const isVideo = file.type.startsWith('video/');
-                const needsCompression = isLargeFile && STORAGE_CONFIG.ENABLE_COMPRESSION;
+                const isImage = file.type.startsWith('image/');
+                
+                // 🖼️ 图片自动压缩策略：超过5MB的图片自动压缩到1MB
+                if (isImage && STORAGE_CONFIG.IMAGE_COMPRESSION.autoCompress && 
+                    fileSizeMB > STORAGE_CONFIG.IMAGE_COMPRESSION.maxSizeMB) {
+                    return {
+                        storeLocal: true,         // 压缩后本地存储
+                        storeCloud: STORAGE_CONFIG.AUTO_CLOUD_SYNC,
+                        needsCompression: true,   // 需要压缩
+                        createThumbnail: true,    // 生成缩略图
+                        autoImageCompress: true,  // 标记为图片自动压缩
+                        targetSize: STORAGE_CONFIG.IMAGE_COMPRESSION.targetSizeMB
+                    };
+                }
                 
                 // 🎥 视频压缩策略：压缩后直接上传云端
-                if (isVideo && needsCompression && STORAGE_CONFIG.AUTO_VIDEO_COMPRESSION) {
+                if (isVideo && isLargeFile && STORAGE_CONFIG.AUTO_VIDEO_COMPRESSION) {
                     return {
                         storeLocal: false,        // 不存储在本地
                         storeCloud: true,         // 直接上传云端
@@ -140,6 +166,8 @@
                     };
                 }
                 
+                // 🎯 常规文件存储策略
+                const needsCompression = isLargeFile && STORAGE_CONFIG.ENABLE_COMPRESSION;
                 return {
                     storeLocal: !isHugeFile,  // 其他文件的本地存储策略
                     storeCloud: STORAGE_CONFIG.AUTO_CLOUD_SYNC && !isHugeFile,
@@ -202,18 +230,27 @@
                         console.log(`📤 压缩完成，准备上传: ${file.name} (${result.compressedSize})`);
                         
                     } else if (strategy.storeLocal) {
-                        // 传统本地存储策略
-                        if (strategy.needsCompression) {
+                        // 本地存储策略
+                        if (strategy.needsCompression || strategy.autoImageCompress) {
                             const startTime = Date.now();
-                            result.dataUrl = await this.compressFile(file);
+                            
+                            // 🎯 使用智能压缩（支持图片目标大小压缩）
+                            result.dataUrl = await this.smartCompressFile(file, strategy);
                             result.isCompressed = true;
                             result.compressionTime = Date.now() - startTime;
                             
                             // 估算压缩后的大小
                             if (result.dataUrl) {
-                                const base64Length = result.dataUrl.split(',')[1]?.length || 0;
-                                const sizeInBytes = (base64Length * 3) / 4;
-                                result.compressedSize = (sizeInBytes / 1024 / 1024).toFixed(1) + 'MB';
+                                const compressedSize = this.estimateDataUrlSize(result.dataUrl);
+                                result.compressedSize = (compressedSize / 1024 / 1024).toFixed(1) + 'MB';
+                                
+                                // 特殊标记智能图片压缩
+                                if (strategy.autoImageCompress) {
+                                    result.autoImageCompressed = true;
+                                    result.targetSizeMB = strategy.targetSize;
+                                    const compressionRatio = ((1 - compressedSize / file.size) * 100).toFixed(1);
+                                    console.log(`📸 智能图片压缩: ${file.name}, 压缩率: ${compressionRatio}%`);
+                                }
                             }
                         } else {
                             result.dataUrl = await this.fileToDataUrl(file);
@@ -320,6 +357,19 @@
             // 🗜️ 压缩文件
             async compressFile(file) {
                 if (file.type.startsWith('image/')) {
+                    return this.compressImage(file);
+                } else if (file.type.startsWith('video/')) {
+                    return this.compressVideo(file);
+                }
+                return this.fileToDataUrl(file);
+            }
+
+            // 🎯 智能压缩文件（根据策略选择压缩方式）
+            async smartCompressFile(file, strategy) {
+                if (strategy.autoImageCompress && file.type.startsWith('image/')) {
+                    // 使用智能图片压缩到目标大小
+                    return this.compressImageToTargetSize(file, strategy.targetSize);
+                } else if (file.type.startsWith('image/')) {
                     return this.compressImage(file);
                 } else if (file.type.startsWith('video/')) {
                     return this.compressVideo(file);
@@ -614,6 +664,94 @@
                     img.onerror = reject;
                     img.src = URL.createObjectURL(file);
                 });
+            }
+
+            // 🎯 智能图片压缩到目标大小
+            async compressImageToTargetSize(file, targetSizeMB = 1) {
+                console.log(`🖼️ 开始智能压缩图片: ${file.name}, 原始大小: ${(file.size / 1024 / 1024).toFixed(2)}MB → 目标: ${targetSizeMB}MB`);
+                
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    img.onload = async () => {
+                        const config = STORAGE_CONFIG.IMAGE_COMPRESSION;
+                        let { width, height } = img;
+                        
+                        // 1. 计算最佳尺寸
+                        const maxDimension = Math.min(config.maxWidth, config.maxHeight);
+                        if (width > maxDimension || height > maxDimension) {
+                            const ratio = Math.min(maxDimension / width, maxDimension / height);
+                            width *= ratio;
+                            height *= ratio;
+                        }
+                        
+                        canvas.width = width;
+                        canvas.height = height;
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        // 2. 迭代压缩到目标大小
+                        let quality = config.quality;
+                        let dataUrl;
+                        let attempts = 0;
+                        const maxAttempts = 8;
+                        const targetSizeBytes = targetSizeMB * 1024 * 1024;
+                        
+                        do {
+                            dataUrl = canvas.toDataURL(config.format, quality);
+                            const currentSize = this.estimateDataUrlSize(dataUrl);
+                            
+                            console.log(`🔍 压缩尝试 ${attempts + 1}: 质量=${quality.toFixed(2)}, 大小=${(currentSize / 1024 / 1024).toFixed(2)}MB`);
+                            
+                            if (currentSize <= targetSizeBytes) {
+                                console.log(`✅ 图片压缩成功: ${file.name}, 最终大小: ${(currentSize / 1024 / 1024).toFixed(2)}MB`);
+                                break;
+                            }
+                            
+                            // 如果还是太大，继续降低质量
+                            quality *= 0.8;
+                            attempts++;
+                            
+                            // 如果质量太低，尝试进一步缩小尺寸
+                            if (quality < 0.3 && attempts < maxAttempts) {
+                                const scale = 0.85;
+                                width *= scale;
+                                height *= scale;
+                                canvas.width = width;
+                                canvas.height = height;
+                                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                                ctx.drawImage(img, 0, 0, width, height);
+                                quality = 0.7; // 重置质量
+                                console.log(`📏 缩小尺寸: ${width.toFixed(0)}x${height.toFixed(0)}`);
+                            }
+                            
+                        } while (attempts < maxAttempts);
+                        
+                        // 3. 返回最终结果
+                        const finalSize = this.estimateDataUrlSize(dataUrl);
+                        console.log(`🎯 图片压缩完成: ${file.name}, ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(finalSize / 1024 / 1024).toFixed(2)}MB (压缩率: ${((1 - finalSize / file.size) * 100).toFixed(1)}%)`);
+                        
+                        resolve(dataUrl);
+                    };
+                    
+                    img.onerror = (error) => {
+                        console.error('图片加载失败:', error);
+                        reject(error);
+                    };
+                    
+                    img.src = URL.createObjectURL(file);
+                });
+            }
+
+            // 📏 估算DataURL大小
+            estimateDataUrlSize(dataUrl) {
+                // DataURL格式: data:image/jpeg;base64,<base64数据>
+                const base64Data = dataUrl.split(',')[1];
+                if (!base64Data) return 0;
+                
+                // Base64编码大小约为原始数据的4/3
+                return (base64Data.length * 3) / 4;
             }
 
             // 📄 文件转DataURL
@@ -2262,22 +2400,33 @@
                                 
                                 console.log(`📂 处理文件 ${index + 1}/${selectedFiles.length}: ${file.name}`);
                                 
-                                // 显示压缩进度
+                                // 📸🎬 显示压缩进度
                                 if (file.type.startsWith('video/') && file.size > 3 * 1024 * 1024) {
                                     showTemporaryMessage(`🎬 正在压缩视频: ${file.name}...`, 'info');
+                                } else if (file.type.startsWith('image/') && file.size > 5 * 1024 * 1024) {
+                                    showTemporaryMessage(`📸 正在智能压缩大图片: ${file.name}...`, 'info');
                                 }
                                 
                                 const processedFile = await storageManager.processFile(file);
                                 
                                 // 显示压缩结果
-                                if (processedFile.isCompressed && file.type.startsWith('video/')) {
+                                if (processedFile.isCompressed) {
                                     const originalSize = (file.size / 1024 / 1024).toFixed(1);
                                     const compressedSize = processedFile.compressedSize || '未知';
                                     
-                                    if (processedFile.uploadCompressed) {
-                                        showTemporaryMessage(`🚀 视频压缩完成，将直传云端: ${originalSize}MB → ${compressedSize}`, 'success');
-                                    } else {
-                                        showTemporaryMessage(`✅ 视频压缩完成: ${originalSize}MB → ${compressedSize}`, 'success');
+                                    if (file.type.startsWith('video/')) {
+                                        if (processedFile.uploadCompressed) {
+                                            showTemporaryMessage(`🚀 视频压缩完成，将直传云端: ${originalSize}MB → ${compressedSize}`, 'success');
+                                        } else {
+                                            showTemporaryMessage(`✅ 视频压缩完成: ${originalSize}MB → ${compressedSize}`, 'success');
+                                        }
+                                    } else if (file.type.startsWith('image/') && processedFile.autoImageCompressed) {
+                                        // 🖼️ 智能图片压缩反馈
+                                        const compressionRatio = ((1 - parseFloat(compressedSize) / parseFloat(originalSize)) * 100).toFixed(1);
+                                        showTemporaryMessage(
+                                            `📸 图片智能压缩完成: ${originalSize}MB → ${compressedSize} (压缩率${compressionRatio}%)`, 
+                                            'success'
+                                        );
                                     }
                                 }
                                 
