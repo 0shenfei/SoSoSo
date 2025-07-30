@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>社交媒体发布日历</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700&family=Work+Sans:wght@100;200;300;400;500;600;700&family=Source+Sans+Pro:wght@200;300;400;600;700&family=Poppins:wght@100;200;300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { 
-            font-family: 'Inter', sans-serif; 
+            font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, sans-serif; 
             background: #f8f9fa;
         }
         .custom-scrollbar::-webkit-scrollbar {
@@ -279,7 +279,7 @@
                             key={dayKey}
                             className={`relative ${cellClass} aspect-square flex flex-col`}
                         >
-                            <div className="absolute top-3 left-3 text-sm text-gray-400 font-light">{day}</div>
+                            <div className="absolute top-3 left-3 text-base text-gray-400" style={{fontWeight: 200}}>{day}</div>
                             {/* 主要内容区域 */}
                             <div className="flex-1 flex items-center justify-center p-4">
                                 {postsForDay.length > 0 && postsForDay[0].files && postsForDay[0].files.length > 0 ? (
@@ -518,7 +518,7 @@
                             >
                                 <ChevronLeft />
                             </button>
-                            <h2 className="text-2xl font-light text-gray-400 tracking-wider uppercase">
+                            <h2 className="text-2xl text-gray-400 tracking-widest uppercase" style={{fontWeight: 200}}>
                                 {getMonthYear()}
                             </h2>
                             <button
@@ -530,9 +530,9 @@
                             </button>
                         </div>
 
-                        <div className="grid grid-cols-7 gap-0 mb-4 text-center text-gray-400 text-sm font-light tracking-wider">
+                        <div className="grid grid-cols-7 gap-0 mb-4 text-center text-gray-400 text-sm tracking-wider">
                             {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => (
-                                <div key={index} className="py-4">{day}</div>
+                                <div key={index} className="py-4" style={{fontWeight: 300}}>{day}</div>
                             ))}
                         </div>
 
