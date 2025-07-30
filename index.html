@@ -74,6 +74,9 @@
         // 检查Supabase是否配置正确
         const isSupabaseConfigured = SUPABASE_URL !== 'YOUR_SUPABASE_URL' && SUPABASE_ANON_KEY !== 'YOUR_SUPABASE_ANON_KEY';
         
+        // 调试模式开关 - 在生产环境中可以设为false
+        const DEBUG_MODE = true;
+        
         // 图标组件
         const ChevronLeft = () => <span>‹</span>;
         const ChevronRight = () => <span>›</span>;
@@ -84,12 +87,23 @@
             // 上传文件到Supabase Storage
             async uploadFile(file, fileName, userId) {
                 try {
+                    // 验证文件
+                    if (!file || !fileName || !userId) {
+                        console.error('上传参数不完整:', { file: !!file, fileName, userId });
+                        return null;
+                    }
+
                     const fileExt = fileName.split('.').pop();
                     const filePath = `${userId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
                     
+                    console.log(`开始上传文件: ${fileName}, 大小: ${file.size} bytes`);
+                    
                     const { data, error } = await supabase.storage
                         .from('media-files')
-                        .upload(filePath, file);
+                        .upload(filePath, file, {
+                            cacheControl: '3600',
+                            upsert: false
+                        });
 
                     if (error) {
                         console.error('文件上传失败:', error);
@@ -100,6 +114,8 @@
                     const { data: { publicUrl } } = supabase.storage
                         .from('media-files')
                         .getPublicUrl(filePath);
+
+                    console.log(`文件上传成功: ${fileName} -> ${publicUrl}`);
 
                     return {
                         filePath: filePath,
@@ -163,16 +179,18 @@
                     const { data: { user } } = await supabase.auth.getUser();
                     if (!user) return;
 
-                    console.log('开始保存数据到云端...');
+                    if (DEBUG_MODE) console.log('开始保存数据到云端...');
 
                     // 处理每个日期的帖子
                     for (const [date, dayPosts] of Object.entries(posts)) {
                         for (const post of dayPosts) {
                             try {
-                                // 如果有文件且尚未上传，先上传文件
-                                let uploadedFiles = [];
-                                if (post.files && post.files.length > 0) {
-                                    console.log(`正在上传 ${post.files.length} 个文件...`);
+                                // 暂时跳过文件上传，仅保存文案和平台信息
+                                let uploadedFiles = post.files || [];
+                                
+                                // TODO: 文件上传功能暂时禁用，避免页面崩溃
+                                if (false && post.files && post.files.length > 0) {
+                                    if (DEBUG_MODE) console.log(`正在上传 ${post.files.length} 个文件...`);
                                     
                                     for (const fileData of post.files) {
                                         if (fileData.file && !fileData.cloudUrl) {
@@ -184,11 +202,11 @@
                                                     cloudPath: uploadResult.filePath,
                                                     uploaded: true
                                                 });
-                                                console.log(`文件上传成功: ${fileData.name}`);
+                                                if (DEBUG_MODE) console.log(`文件上传成功: ${fileData.name}`);
                                             } else {
                                                 // 上传失败，保留原始数据
                                                 uploadedFiles.push(fileData);
-                                                console.log(`文件上传失败: ${fileData.name}`);
+                                                if (DEBUG_MODE) console.log(`文件上传失败: ${fileData.name}`);
                                             }
                                         } else {
                                             // 已经上传过的文件或没有原始文件
@@ -534,17 +552,18 @@
                 try {
                     localStorage.setItem('socialMediaCalendar', JSON.stringify(scheduledPosts));
                     
-                    // 如果用户已登录，同时保存到Supabase
+                    // 如果用户已登录，同时保存到Supabase（延迟执行避免阻塞）
                     if (user && isSupabaseConfigured) {
-                        // 显示上传状态
-                        showTemporaryMessage('正在同步到云端...', 'info');
-                        
-                        // 异步上传，不阻塞界面
-                        SupabaseService.savePosts(scheduledPosts).then(() => {
-                            showTemporaryMessage('云端同步完成！', 'success');
-                        }).catch(() => {
-                            showTemporaryMessage('云端同步失败，数据已保存在本地', 'warning');
-                        });
+                        setTimeout(() => {
+                            showTemporaryMessage('正在同步到云端...', 'info');
+                            
+                            SupabaseService.savePosts(scheduledPosts).then(() => {
+                                showTemporaryMessage('云端同步完成！', 'success');
+                            }).catch((error) => {
+                                console.error('云端同步错误:', error);
+                                showTemporaryMessage('云端同步失败，数据已保存在本地', 'warning');
+                            });
+                        }, 100); // 延迟100ms执行
                     }
                 } catch (error) {
                     console.error('保存数据失败:', error);
@@ -920,7 +939,8 @@
                                     dataUrl: compressedDataUrl,  // 用于日历预览的压缩版本
                                     originalDataUrl: originalDataUrl, // 用于lightbox的高质量版本
                                     name: file.name, 
-                                    size: file.size 
+                                    size: file.size,
+                                    file: file // 保存原始文件对象用于上传
                                 };
                             } else if (file.type.startsWith('video/')) {
                                 try {
@@ -934,7 +954,8 @@
                                         originalDataUrl: compressedVideo, // 同样使用压缩版本
                                         name: file.name, 
                                         size: file.size, 
-                                        isLargeFile: true 
+                                        isLargeFile: true,
+                                        file: file // 保存原始文件对象用于上传
                                     };
                                 } catch (error) {
                                     // 如果视频压缩失败，只存储缩略图
@@ -946,7 +967,8 @@
                                         originalDataUrl: thumbnail,
                                         name: file.name, 
                                         size: file.size, 
-                                        isLargeFile: true 
+                                        isLargeFile: true,
+                                        file: file // 保存原始文件对象用于上传
                                     };
                                 }
                             }
