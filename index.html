@@ -368,6 +368,53 @@
                 }
             },
 
+            // 只保存文案到云端（不上传文件）
+            async savePostsTextOnly(posts) {
+                if (!isSupabaseConfigured) return;
+                
+                try {
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (!user) return;
+
+                    if (DEBUG_MODE) console.log('开始同步文案到云端...');
+
+                    // 只处理文案和平台信息，跳过文件
+                    for (const [date, dayPosts] of Object.entries(posts)) {
+                        for (const post of dayPosts) {
+                            try {
+                                // 保存帖子数据到数据库（不包含文件）
+                                const postData = {
+                                    user_id: user.id,
+                                    date,
+                                    caption: post.caption || '',
+                                    platforms: post.platforms || []
+                                };
+
+                                // 删除该日期的现有数据
+                                await supabase.from('posts').delete().eq('user_id', user.id).eq('date', date);
+                                
+                                // 插入新数据
+                                const { error: postError } = await supabase
+                                    .from('posts')
+                                    .insert(postData);
+
+                                if (postError) {
+                                    if (DEBUG_MODE) console.log('数据库表尚未创建，跳过数据库保存');
+                                    continue;
+                                }
+
+                            } catch (postError) {
+                                console.error('保存单个帖子失败:', postError);
+                            }
+                        }
+                    }
+
+                    if (DEBUG_MODE) console.log('文案同步完成');
+                } catch (error) {
+                    console.error('Supabase文案同步错误:', error);
+                }
+            },
+
             // 从云端加载发布内容（包含文件）
             async loadPosts() {
                 if (!isSupabaseConfigured) return null;
@@ -437,6 +484,58 @@
                     }
                 } catch (error) {
                     console.error('Supabase加载错误:', error);
+                    return null;
+                }
+            },
+
+            // 只从云端加载文案（不加载文件）
+            async loadTextOnlyPosts() {
+                if (!isSupabaseConfigured) return null;
+                
+                try {
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (!user) return null;
+
+                    if (DEBUG_MODE) console.log('从云端加载文案数据...');
+
+                    try {
+                        // 只加载帖子数据，不包含媒体文件
+                        const { data: postsData, error: postsError } = await supabase
+                            .from('posts')
+                            .select('*')
+                            .eq('user_id', user.id)
+                            .order('date', { ascending: true });
+
+                        if (postsError) {
+                            if (DEBUG_MODE) console.log('云端暂无数据，保持本地数据');
+                            return null;
+                        }
+
+                        if (!postsData || postsData.length === 0) {
+                            if (DEBUG_MODE) console.log('云端文案数据为空');
+                            return {};
+                        }
+
+                        // 转换为原有格式（只包含文案，不包含文件）
+                        const posts = {};
+                        postsData.forEach(post => {
+                            if (!posts[post.date]) posts[post.date] = [];
+                            
+                            posts[post.date].push({
+                                caption: post.caption,
+                                platforms: post.platforms,
+                                files: [] // 不加载文件，保持空数组
+                            });
+                        });
+
+                        if (DEBUG_MODE) console.log(`成功加载 ${Object.keys(posts).length} 个日期的文案数据`);
+                        return posts;
+                    } catch (dbError) {
+                        if (DEBUG_MODE) console.log('数据库表尚未创建或连接失败，保持本地数据');
+                        return null;
+                    }
+                } catch (error) {
+                    console.error('Supabase文案加载错误:', error);
                     return null;
                 }
             },
@@ -649,43 +748,16 @@
                 try {
                     localStorage.setItem('socialMediaCalendar', JSON.stringify(scheduledPosts));
                     
-                    // 如果用户已登录，同时保存到Supabase（延迟执行避免阻塞）
+                    // 如果用户已登录，同步文案到云端（视频文件保持本地存储）
                     if (user && isSupabaseConfigured) {
                         setTimeout(() => {
-                            // 检查是否有新文件需要上传
-                            const hasNewFiles = Object.values(scheduledPosts).some(dayPosts =>
-                                dayPosts.some(post => 
-                                    post.files && post.files.some(file => file.file && !file.uploaded)
-                                )
-                            );
-
-                            if (hasNewFiles) {
-                                setIsUploading(true);
-                                setUploadStatus('准备上传文件...');
-                                showTemporaryMessage('正在上传文件到云端...', 'info');
-                            } else {
-                                showTemporaryMessage('正在同步到云端...', 'info');
-                            }
+                            showTemporaryMessage('正在同步文案到云端...', 'info');
                             
-                            SupabaseService.savePosts(scheduledPosts, (progress, fileName, error) => {
-                                if (error) {
-                                    setUploadStatus(`上传失败: ${fileName}`);
-                                } else if (progress === 100) {
-                                    setUploadStatus(`上传完成: ${fileName}`);
-                                } else if (progress >= 0) {
-                                    setUploadStatus(`上传中: ${fileName} (${progress.toFixed(0)}%)`);
-                                    setUploadProgress(prev => ({ ...prev, [fileName]: progress }));
-                                }
-                            }).then(() => {
-                                setIsUploading(false);
-                                setUploadStatus('');
-                                setUploadProgress({});
-                                showTemporaryMessage('云端同步完成！', 'success');
+                            // 只同步文案，不上传视频文件
+                            SupabaseService.savePostsTextOnly(scheduledPosts).then(() => {
+                                showTemporaryMessage('文案同步完成！（视频保存在本地）', 'success');
                             }).catch((error) => {
                                 console.error('云端同步错误:', error);
-                                setIsUploading(false);
-                                setUploadStatus('');
-                                setUploadProgress({});
                                 showTemporaryMessage('云端同步失败，数据已保存在本地', 'warning');
                             });
                         }, 100); // 延迟100ms执行
@@ -707,60 +779,39 @@
                         const currentUser = await SupabaseService.getCurrentUser();
                         setUser(currentUser);
 
-                        // 如果用户已登录，智能合并本地和云端数据
+                        // 如果用户已登录，只同步云端文案，保持本地文件
                         if (currentUser) {
-                            const cloudPosts = await SupabaseService.loadPosts();
-                            if (cloudPosts && Object.keys(cloudPosts).length > 0) {
-                                // 智能合并：保留本地文件，同步云端文案
+                            const cloudTextPosts = await SupabaseService.loadTextOnlyPosts();
+                            if (cloudTextPosts && Object.keys(cloudTextPosts).length > 0) {
+                                // 简化合并：只更新文案和平台，保持所有本地文件
                                 setScheduledPosts(prevPosts => {
                                     const mergedPosts = { ...prevPosts };
                                     
-                                    Object.entries(cloudPosts).forEach(([date, cloudDayPosts]) => {
+                                    Object.entries(cloudTextPosts).forEach(([date, cloudDayPosts]) => {
                                         cloudDayPosts.forEach((cloudPost, index) => {
                                             if (mergedPosts[date] && mergedPosts[date][index]) {
-                                                // 智能合并：优先保留有更多数据的文件
-                                                const localFiles = mergedPosts[date][index].files || [];
-                                                const cloudFiles = cloudPost.files || [];
-                                                
-                                                // 如果本地文件有原始File对象或更完整的数据，优先保留
-                                                const shouldKeepLocal = localFiles.some(f => f.file || f.dataUrl?.startsWith('data:') || f.originalDataUrl?.startsWith('data:'));
-                                                const shouldKeepCloud = cloudFiles.some(f => f.cloudUrl || f.uploaded);
-                                                
-                                                let finalFiles = localFiles;
-                                                if (!shouldKeepLocal && shouldKeepCloud) {
-                                                    finalFiles = cloudFiles;
-                                                } else if (shouldKeepLocal && shouldKeepCloud) {
-                                                    // 合并：使用本地数据但更新云端URL
-                                                    finalFiles = localFiles.map((localFile, fileIndex) => {
-                                                        const cloudFile = cloudFiles[fileIndex];
-                                                        if (cloudFile && cloudFile.cloudUrl) {
-                                                            return {
-                                                                ...localFile,
-                                                                cloudUrl: cloudFile.cloudUrl,
-                                                                uploaded: true
-                                                            };
-                                                        }
-                                                        return localFile;
-                                                    });
-                                                }
-                                                
+                                                // 只更新文案和平台，保留所有本地文件
                                                 mergedPosts[date][index] = {
-                                                    ...cloudPost,
-                                                    files: finalFiles
+                                                    ...mergedPosts[date][index], // 保持原有数据（包括files）
+                                                    caption: cloudPost.caption,   // 更新文案
+                                                    platforms: cloudPost.platforms // 更新平台
                                                 };
                                             } else {
-                                                // 新的云端数据
+                                                // 新的云端文案数据（无文件）
                                                 if (!mergedPosts[date]) mergedPosts[date] = [];
-                                                mergedPosts[date][index] = cloudPost;
+                                                mergedPosts[date][index] = {
+                                                    ...cloudPost,
+                                                    files: [] // 云端只有文案，无文件
+                                                };
                                             }
                                         });
                                     });
                                     
                                     return mergedPosts;
                                 });
-                                showTemporaryMessage('数据已同步（本地文件优先保留）', 'success');
+                                showTemporaryMessage('文案已同步（文件保持本地存储）', 'success');
                             } else {
-                                showTemporaryMessage('已登录，本地数据将上传到云端', 'success');
+                                showTemporaryMessage('已登录，文案将同步到云端', 'success');
                             }
                         }
                     } catch (error) {
@@ -779,59 +830,38 @@
                             setUser(session?.user || null);
                             
                             if (event === 'SIGNED_IN' && session?.user) {
-                                showTemporaryMessage('登录成功！正在同步数据...', 'success');
-                                const cloudPosts = await SupabaseService.loadPosts();
-                                if (cloudPosts && Object.keys(cloudPosts).length > 0) {
-                                    // 智能合并：保留本地文件，同步云端文案
+                                showTemporaryMessage('登录成功！正在同步文案...', 'success');
+                                const cloudTextPosts = await SupabaseService.loadTextOnlyPosts();
+                                if (cloudTextPosts && Object.keys(cloudTextPosts).length > 0) {
+                                    // 简化合并：只更新文案，保持所有本地文件
                                     setScheduledPosts(prevPosts => {
                                         const mergedPosts = { ...prevPosts };
                                         
-                                        Object.entries(cloudPosts).forEach(([date, cloudDayPosts]) => {
+                                        Object.entries(cloudTextPosts).forEach(([date, cloudDayPosts]) => {
                                             cloudDayPosts.forEach((cloudPost, index) => {
                                                 if (mergedPosts[date] && mergedPosts[date][index]) {
-                                                    // 智能合并：优先保留有更多数据的文件
-                                                    const localFiles = mergedPosts[date][index].files || [];
-                                                    const cloudFiles = cloudPost.files || [];
-                                                    
-                                                    // 如果本地文件有原始File对象或更完整的数据，优先保留
-                                                    const shouldKeepLocal = localFiles.some(f => f.file || f.dataUrl?.startsWith('data:') || f.originalDataUrl?.startsWith('data:'));
-                                                    const shouldKeepCloud = cloudFiles.some(f => f.cloudUrl || f.uploaded);
-                                                    
-                                                    let finalFiles = localFiles;
-                                                    if (!shouldKeepLocal && shouldKeepCloud) {
-                                                        finalFiles = cloudFiles;
-                                                    } else if (shouldKeepLocal && shouldKeepCloud) {
-                                                        // 合并：使用本地数据但更新云端URL
-                                                        finalFiles = localFiles.map((localFile, fileIndex) => {
-                                                            const cloudFile = cloudFiles[fileIndex];
-                                                            if (cloudFile && cloudFile.cloudUrl) {
-                                                                return {
-                                                                    ...localFile,
-                                                                    cloudUrl: cloudFile.cloudUrl,
-                                                                    uploaded: true
-                                                                };
-                                                            }
-                                                            return localFile;
-                                                        });
-                                                    }
-                                                    
+                                                    // 只更新文案和平台，保留所有本地文件
                                                     mergedPosts[date][index] = {
-                                                        ...cloudPost,
-                                                        files: finalFiles
+                                                        ...mergedPosts[date][index], // 保持原有数据（包括files）
+                                                        caption: cloudPost.caption,   // 更新文案
+                                                        platforms: cloudPost.platforms // 更新平台
                                                     };
                                                 } else {
-                                                    // 新的云端数据
+                                                    // 新的云端文案数据（无文件）
                                                     if (!mergedPosts[date]) mergedPosts[date] = [];
-                                                    mergedPosts[date][index] = cloudPost;
+                                                    mergedPosts[date][index] = {
+                                                        ...cloudPost,
+                                                        files: [] // 云端只有文案，无文件
+                                                    };
                                                 }
                                             });
                                         });
                                         
                                         return mergedPosts;
                                     });
-                                    showTemporaryMessage('数据同步完成（本地文件已保留）', 'success');
+                                    showTemporaryMessage('文案同步完成（文件保持本地）', 'success');
                                 } else {
-                                    showTemporaryMessage('登录成功！本地数据将上传到云端', 'success');
+                                    showTemporaryMessage('登录成功！文案将同步到云端', 'success');
                                 }
                             } else if (event === 'SIGNED_OUT') {
                                 showTemporaryMessage('已退出登录', 'success');
@@ -1263,14 +1293,6 @@
                                 {postsForDay.length > 0 ? (
                                     postsForDay[0].files && postsForDay[0].files.length > 0 ? (
                                         <div className="relative group media-container">
-                                            {/* 文件上传状态指示器 */}
-                                            {isUploading && postsForDay[0].files.some(file => file.file && !file.uploaded) && (
-                                                <div className="absolute top-1 left-1 z-30 bg-blue-500 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1">
-                                                    <div className="animate-spin rounded-full h-2 w-2 border border-white border-t-transparent"></div>
-                                                    <span>上传中</span>
-                                                </div>
-                                            )}
-                                            
                                             <button
                                                 onClick={() => removeMedia(currentDay, 0)}
                                                 className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity bg-blue-500 text-white rounded-full p-1 shadow-md hover:bg-blue-600"
@@ -1440,41 +1462,7 @@
                 <div className="min-h-screen bg-gray-50 p-4 md:p-6 font-sans antialiased">
                     <div className="max-w-7xl mx-auto bg-white relative">
                         
-                        {/* 上传进度提示 */}
-                        {isUploading && (
-                            <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 bg-white border border-blue-200 rounded-lg shadow-lg p-4 min-w-80">
-                                <div className="flex items-center gap-3">
-                                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
-                                    <div className="flex-1">
-                                        <div className="text-sm font-medium text-gray-900 mb-1">
-                                            正在上传文件到云端
-                                        </div>
-                                        <div className="text-xs text-gray-600">
-                                            {uploadStatus || '准备中...'}
-                                        </div>
-                                        {/* 进度条 */}
-                                        {Object.keys(uploadProgress).length > 0 && (
-                                            <div className="mt-2">
-                                                {Object.entries(uploadProgress).map(([fileName, progress]) => (
-                                                    <div key={fileName} className="mb-1">
-                                                        <div className="flex justify-between text-xs text-gray-600 mb-1">
-                                                            <span className="truncate max-w-32">{fileName}</span>
-                                                            <span>{progress.toFixed(0)}%</span>
-                                                        </div>
-                                                        <div className="w-full bg-gray-200 rounded-full h-1.5">
-                                                            <div 
-                                                                className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" 
-                                                                style={{ width: `${progress}%` }}
-                                                            ></div>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+
 
                         {/* 顶部控制栏 */}
                         <div className="flex justify-between items-start p-4 md:p-8 pb-4">
