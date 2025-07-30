@@ -61,6 +61,11 @@
             object-fit: cover;
             object-position: center;
         }
+        .nav-button {
+            min-width: 48px;
+            min-height: 48px;
+            flex-shrink: 0;
+        }
     </style>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -544,8 +549,8 @@
             };
 
             return (
-                <div className="min-h-screen bg-gray-50 p-6 font-sans antialiased">
-                    <div className="max-w-7xl mx-auto bg-white p-8 relative">
+                <div className="min-h-screen bg-gray-50 p-4 md:p-6 font-sans antialiased">
+                    <div className="max-w-7xl mx-auto bg-white p-4 md:p-8 relative overflow-hidden">
 
 
                         <div className="absolute top-4 right-4 text-sm text-gray-600 font-medium text-right">
@@ -581,20 +586,20 @@
                             </div>
                         )}
 
-                        <div className="flex items-center justify-between mb-8">
+                        <div className="flex items-center justify-between mb-8 px-4">
                             <button
                                 onClick={prevMonth}
-                                className="text-gray-400 hover:text-gray-600 transition-colors text-3xl font-light"
+                                className="nav-button flex items-center justify-center w-12 h-12 text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-all text-2xl font-light rounded-full"
                                 aria-label="上个月"
                             >
                                 <ChevronLeft />
                             </button>
-                            <h2 className="text-2xl text-gray-400 tracking-widest uppercase" style={{fontWeight: 200}}>
+                            <h2 className="text-3xl md:text-4xl lg:text-5xl text-gray-400 tracking-widest uppercase flex-1 text-center" style={{fontWeight: 200}}>
                                 {getMonthYear()}
                             </h2>
                             <button
                                 onClick={nextMonth}
-                                className="text-gray-400 hover:text-gray-600 transition-colors text-3xl font-light"
+                                className="nav-button flex items-center justify-center w-12 h-12 text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-all text-2xl font-light rounded-full"
                                 aria-label="下个月"
                             >
                                 <ChevronRight />
