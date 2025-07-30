@@ -157,14 +157,15 @@
                 const isVideo = file.type.startsWith('video/');
                 const isImage = file.type.startsWith('image/');
                 
-                // 🖼️ 图片自动压缩策略：超过5MB的图片自动压缩到1MB
+                // 🖼️ 图片自动压缩策略：超过5MB的图片自动压缩到1MB并上传云端
                 if (isImage && STORAGE_CONFIG.IMAGE_COMPRESSION.autoCompress && 
                     fileSizeMB > STORAGE_CONFIG.IMAGE_COMPRESSION.maxSizeMB) {
                     return {
-                        storeLocal: true,         // 压缩后本地存储
-                        storeCloud: STORAGE_CONFIG.AUTO_CLOUD_SYNC,
+                        storeLocal: false,        // 不存储在本地
+                        storeCloud: true,         // 压缩后直接上传云端
                         needsCompression: true,   // 需要压缩
                         createThumbnail: true,    // 生成缩略图
+                        uploadCompressed: true,   // 标记为压缩后上传
                         autoImageCompress: true,  // 标记为图片自动压缩
                         targetSize: STORAGE_CONFIG.IMAGE_COMPRESSION.targetSizeMB
                     };
@@ -268,12 +269,36 @@
                         
                         console.log(`📤 压缩完成，准备上传: ${file.name} (${result.compressedSize})`);
                         
+                    } else if (strategy.uploadCompressed && strategy.autoImageCompress) {
+                        // 🖼️ 图片压缩直传云端策略
+                        const startTime = Date.now();
+                        console.log(`🚀 图片将压缩后直接上传云端: ${file.name}`);
+                        
+                        result.compressedBlob = await this.compressImageToTargetSize(file, strategy.targetSize);
+                        result.isCompressed = true;
+                        result.compressionTime = Date.now() - startTime;
+                        result.compressedSize = (result.compressedBlob.size / 1024 / 1024).toFixed(1) + 'MB';
+                        
+                        // 标记智能图片压缩
+                        result.autoImageCompressed = true;
+                        result.targetSizeMB = strategy.targetSize;
+                        const compressionRatio = ((1 - result.compressedBlob.size / file.size) * 100).toFixed(1);
+                        console.log(`📸 智能图片压缩: ${file.name}, 压缩率: ${compressionRatio}%`);
+                        
+                        // 本地只保存缩略图，用于预览
+                        result.dataUrl = result.thumbnail;
+                        result.originalDataUrl = null; // 不保存原图片在本地
+                        result.needsCloudUpload = true;
+                        result.uploadCompressed = true;
+                        
+                        console.log(`📤 图片压缩完成，准备上传: ${file.name} (${result.compressedSize})`);
+                        
                     } else if (strategy.storeLocal) {
                         // 本地存储策略
-                        if (strategy.needsCompression || strategy.autoImageCompress) {
+                        if (strategy.needsCompression) {
                             const startTime = Date.now();
                             
-                            // 🎯 使用智能压缩（支持图片目标大小压缩）
+                            // 🎯 使用智能压缩
                             result.dataUrl = await this.smartCompressFile(file, strategy);
                             result.isCompressed = true;
                             result.compressionTime = Date.now() - startTime;
@@ -282,14 +307,6 @@
                             if (result.dataUrl) {
                                 const compressedSize = this.estimateDataUrlSize(result.dataUrl);
                                 result.compressedSize = (compressedSize / 1024 / 1024).toFixed(1) + 'MB';
-                                
-                                // 特殊标记智能图片压缩
-                                if (strategy.autoImageCompress) {
-                                    result.autoImageCompressed = true;
-                                    result.targetSizeMB = strategy.targetSize;
-                                    const compressionRatio = ((1 - compressedSize / file.size) * 100).toFixed(1);
-                                    console.log(`📸 智能图片压缩: ${file.name}, 压缩率: ${compressionRatio}%`);
-                                }
                             }
                         } else {
                             result.dataUrl = await this.fileToDataUrl(file);
@@ -2399,10 +2416,17 @@
                                     } else if (file.type.startsWith('image/') && processedFile.autoImageCompressed) {
                                         // 🖼️ 智能图片压缩反馈
                                         const compressionRatio = ((1 - parseFloat(compressedSize) / parseFloat(originalSize)) * 100).toFixed(1);
-                                        showTemporaryMessage(
-                                            `📸 图片智能压缩完成: ${originalSize}MB → ${compressedSize} (压缩率${compressionRatio}%)`, 
-                                            'success'
-                                        );
+                                        if (processedFile.uploadCompressed) {
+                                            showTemporaryMessage(
+                                                `📸 图片智能压缩完成，将直传云端: ${originalSize}MB → ${compressedSize} (压缩率${compressionRatio}%)`, 
+                                                'success'
+                                            );
+                                        } else {
+                                            showTemporaryMessage(
+                                                `📸 图片智能压缩完成: ${originalSize}MB → ${compressedSize} (压缩率${compressionRatio}%)`, 
+                                                'success'
+                                            );
+                                        }
                                     }
                                 }
                                 
@@ -2527,7 +2551,7 @@
                                                 if (currentFile.type === 'image') {
                                                     return (
                                                         <img
-                                                            src={currentFile.dataUrl || currentFile.originalDataUrl}
+                                                            src={currentFile.cloudUrl || currentFile.dataUrl || currentFile.originalDataUrl}
                                                             alt="内容图片"
                                                             className={`cursor-pointer w-full h-full ${
                                                                 mediaDisplayMode === 'fit' 
@@ -2536,7 +2560,7 @@
                                                             }`}
                                                             onClick={() => openLightbox({
                                                                 ...currentFile,
-                                                                // 对于图片，使用高质量的originalDataUrl或cloudUrl
+                                                                // 对于图片，优先使用cloudUrl
                                                                 dataUrl: currentFile.cloudUrl || currentFile.originalDataUrl || currentFile.dataUrl,
                                                                 caption: postsForDay[0].caption,
                                                                 allFiles: postsForDay[0].files,
@@ -2550,17 +2574,17 @@
                                                             className="w-full h-full cursor-pointer"
                                                             onClick={() => openLightbox({
                                                                 ...currentFile,
-                                                                // 对于视频，保持cloudUrl用于播放
+                                                                // 对于视频，优先使用cloudUrl
                                                                 dataUrl: currentFile.cloudUrl || currentFile.originalDataUrl || currentFile.dataUrl,
                                                                 caption: postsForDay[0].caption,
                                                                 allFiles: postsForDay[0].files,
                                                                 currentIndex: currentFileIndex
                                                             })}
                                                         >
-                                                            {/* 简化的视频显示：直接使用DataURL */}
-                                                            {currentFile.dataUrl && currentFile.dataUrl.startsWith('data:video/') ? (
+                                                            {/* 智能视频显示：优先使用cloudUrl */}
+                                                            {(currentFile.cloudUrl || (currentFile.dataUrl && currentFile.dataUrl.startsWith('data:video/'))) ? (
                                                                 <video
-                                                                    src={currentFile.dataUrl}
+                                                                    src={currentFile.cloudUrl || currentFile.dataUrl}
                                                                     className={`w-full h-full calendar-video ${
                                                                         mediaDisplayMode === 'fit' 
                                                                             ? 'object-contain bg-gray-100' 
@@ -3156,7 +3180,7 @@
                                             if (currentMedia.type === 'image') {
                                                 return (
                                                     <img
-                                                        src={currentMedia.originalDataUrl || currentMedia.dataUrl}
+                                                        src={currentMedia.cloudUrl || currentMedia.originalDataUrl || currentMedia.dataUrl}
                                                         alt={currentMedia.name}
                                                         className="max-w-full max-h-full object-contain rounded-lg"
                                                     />
