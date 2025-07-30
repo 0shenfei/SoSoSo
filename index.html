@@ -128,29 +128,35 @@
                     const { data: { user } } = await supabase.auth.getUser();
                     if (!user) return null;
 
-                    const { data, error } = await supabase
-                        .from('posts')
-                        .select('*')
-                        .eq('user_id', user.id)
-                        .order('date', { ascending: true });
+                    // 尝试从数据库加载，如果失败就返回null（保持本地数据）
+                    try {
+                        const { data, error } = await supabase
+                            .from('posts')
+                            .select('*')
+                            .eq('user_id', user.id)
+                            .order('date', { ascending: true });
 
-                    if (error) {
-                        console.error('加载失败:', error);
+                        if (error) {
+                            console.log('云端暂无数据，保持本地数据');
+                            return null;
+                        }
+
+                        // 转换为原有格式
+                        const posts = {};
+                        data.forEach(post => {
+                            if (!posts[post.date]) posts[post.date] = [];
+                            posts[post.date].push({
+                                caption: post.caption,
+                                platforms: post.platforms,
+                                files: [] // 暂时保持空，优先使用本地媒体文件
+                            });
+                        });
+
+                        return posts;
+                    } catch (dbError) {
+                        console.log('数据库表尚未创建或连接失败，保持本地数据');
                         return null;
                     }
-
-                    // 转换为原有格式
-                    const posts = {};
-                    data.forEach(post => {
-                        if (!posts[post.date]) posts[post.date] = [];
-                        posts[post.date].push({
-                            caption: post.caption,
-                            platforms: post.platforms,
-                            files: [] // 稍后处理文件
-                        });
-                    });
-
-                    return posts;
                 } catch (error) {
                     console.error('Supabase加载错误:', error);
                     return null;
@@ -383,12 +389,37 @@
                         const currentUser = await SupabaseService.getCurrentUser();
                         setUser(currentUser);
 
-                        // 如果用户已登录，尝试从云端加载数据
+                        // 如果用户已登录，尝试从云端加载数据并与本地数据合并
                         if (currentUser) {
                             const cloudPosts = await SupabaseService.loadPosts();
                             if (cloudPosts && Object.keys(cloudPosts).length > 0) {
-                                setScheduledPosts(cloudPosts);
-                                showTemporaryMessage('云端数据已同步', 'success');
+                                // 智能合并：保留本地的媒体文件，使用云端的文案
+                                setScheduledPosts(prevPosts => {
+                                    const mergedPosts = { ...prevPosts };
+                                    
+                                    // 合并云端数据，但保留本地的媒体文件
+                                    Object.entries(cloudPosts).forEach(([date, cloudDayPosts]) => {
+                                        if (mergedPosts[date] && mergedPosts[date][0] && mergedPosts[date][0].files) {
+                                            // 如果本地有媒体文件，保留它们，只更新文案
+                                            cloudDayPosts.forEach((cloudPost, index) => {
+                                                if (mergedPosts[date][index]) {
+                                                    mergedPosts[date][index].caption = cloudPost.caption;
+                                                    mergedPosts[date][index].platforms = cloudPost.platforms;
+                                                } else {
+                                                    mergedPosts[date][index] = cloudPost;
+                                                }
+                                            });
+                                        } else {
+                                            // 如果本地没有这个日期的数据，直接使用云端数据
+                                            mergedPosts[date] = cloudDayPosts;
+                                        }
+                                    });
+                                    
+                                    return mergedPosts;
+                                });
+                                showTemporaryMessage('云端数据已同步（保留本地媒体文件）', 'success');
+                            } else {
+                                showTemporaryMessage('已登录，本地数据将同步到云端', 'success');
                             }
                         }
                     } catch (error) {
@@ -409,8 +440,32 @@
                             if (event === 'SIGNED_IN' && session?.user) {
                                 showTemporaryMessage('登录成功！正在同步数据...', 'success');
                                 const cloudPosts = await SupabaseService.loadPosts();
-                                if (cloudPosts) {
-                                    setScheduledPosts(cloudPosts);
+                                if (cloudPosts && Object.keys(cloudPosts).length > 0) {
+                                    // 智能合并：保留本地的媒体文件，同步云端的文案
+                                    setScheduledPosts(prevPosts => {
+                                        const mergedPosts = { ...prevPosts };
+                                        
+                                        Object.entries(cloudPosts).forEach(([date, cloudDayPosts]) => {
+                                            if (mergedPosts[date] && mergedPosts[date][0] && mergedPosts[date][0].files) {
+                                                // 保留本地媒体文件，更新文案
+                                                cloudDayPosts.forEach((cloudPost, index) => {
+                                                    if (mergedPosts[date][index]) {
+                                                        mergedPosts[date][index].caption = cloudPost.caption;
+                                                        mergedPosts[date][index].platforms = cloudPost.platforms;
+                                                    } else {
+                                                        mergedPosts[date][index] = cloudPost;
+                                                    }
+                                                });
+                                            } else {
+                                                mergedPosts[date] = cloudDayPosts;
+                                            }
+                                        });
+                                        
+                                        return mergedPosts;
+                                    });
+                                    showTemporaryMessage('数据同步完成（本地媒体文件已保留）', 'success');
+                                } else {
+                                    showTemporaryMessage('登录成功！本地数据将上传到云端', 'success');
                                 }
                             } else if (event === 'SIGNED_OUT') {
                                 showTemporaryMessage('已退出登录', 'success');
