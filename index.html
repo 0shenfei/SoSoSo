@@ -35,13 +35,27 @@
             width: 100%;
             height: 100%;
             overflow: hidden;
+            border-radius: 4px; /* 添加圆角 */
         }
         .media-container img,
         .media-container video {
             width: 100%;
             height: 100%;
-            object-fit: cover;
+            object-fit: contain; /* 改为contain确保完整显示 */
             object-position: center;
+            background-color: #f3f4f6; /* 添加背景色填充空白区域 */
+        }
+        /* 如果需要裁剪填满的效果，使用这个类 */
+        .media-container.fill-mode img,
+        .media-container.fill-mode video {
+            object-fit: cover; /* 填满模式：裁剪以填满整个容器 */
+        }
+        /* 适应模式：确保媒体完全可见 */
+        .media-container.fit-mode img,
+        .media-container.fit-mode video {
+            object-fit: contain; /* 适应模式：保持完整显示 */
+            max-width: 100%;
+            max-height: 100%;
         }
         .nav-button {
             min-width: 48px;
@@ -1870,6 +1884,7 @@
             const [isUploading, setIsUploading] = React.useState(false);
             const [uploadStatus, setUploadStatus] = React.useState('');
             const [currentLightboxIndex, setCurrentLightboxIndex] = React.useState(0);
+            const [mediaDisplayMode, setMediaDisplayMode] = React.useState('fit'); // 'fit' or 'fill'
 
             const platforms = [
                 { name: 'IG', url: 'https://www.instagram.com/' },
@@ -2635,7 +2650,7 @@
                                 
                                 {postsForDay.length > 0 ? (
                                     postsForDay[0].files && postsForDay[0].files.length > 0 ? (
-                                        <div className="relative group media-container">
+                                        <div className={`relative group media-container ${mediaDisplayMode}-mode`}>
                                             <button
                                                 onClick={() => removeMedia(currentDay, 0)}
                                                 className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity bg-blue-500 text-white rounded-full p-1 shadow-md hover:bg-blue-600"
@@ -2669,7 +2684,11 @@
                                                         <img
                                                             src={currentFile.dataUrl || currentFile.originalDataUrl}
                                                             alt="内容图片"
-                                                            className="cursor-pointer"
+                                                            className={`cursor-pointer w-full h-full ${
+                                                                mediaDisplayMode === 'fit' 
+                                                                    ? 'object-contain bg-gray-100' 
+                                                                    : 'object-cover'
+                                                            }`}
                                                             onClick={() => openLightbox({
                                                                 ...currentFile,
                                                                 // 对于图片，使用高质量的originalDataUrl或cloudUrl
@@ -2697,7 +2716,11 @@
                                                             {currentFile.dataUrl && currentFile.dataUrl.startsWith('data:video/') ? (
                                                                 <video
                                                                     src={currentFile.dataUrl}
-                                                                    className="w-full h-full object-cover calendar-video"
+                                                                    className={`w-full h-full calendar-video ${
+                                                                        mediaDisplayMode === 'fit' 
+                                                                            ? 'object-contain bg-gray-100' 
+                                                                            : 'object-cover'
+                                                                    }`}
                                                                     autoPlay
                                                                     muted
                                                                     loop
@@ -2716,10 +2739,14 @@
                                                                     <img
                                                                         src={currentFile.thumbnail}
                                                                         alt="视频缩略图"
-                                                                        className="w-full h-full object-cover"
+                                                                        className={`w-full h-full ${
+                                                                            mediaDisplayMode === 'fit' 
+                                                                                ? 'object-contain bg-gray-100' 
+                                                                                : 'object-cover'
+                                                                        }`}
                                                                     />
-                                                                    <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-20">
-                                                                        <div className="bg-white bg-opacity-90 rounded-full p-2">
+                                                                    <div className="absolute inset-0 flex items-center justify-center">
+                                                                        <div className="bg-white bg-opacity-90 rounded-full p-2 shadow-md">
                                                                             <span className="text-gray-700 text-xl">▶</span>
                                                                         </div>
                                                                     </div>
@@ -2947,7 +2974,7 @@
                     }
                 };
 
-                return (
+                                                return (
                     <div className="fixed bottom-4 left-4 z-40 bg-white rounded-lg shadow-lg border text-xs max-w-xs">
                         <div className="p-3">
                             <div className="flex items-center gap-2 mb-2">
@@ -2962,7 +2989,7 @@
                                 >
                                     ⚙️
                                 </button>
-                            </div>
+                                                            </div>
                             
                             <div className="space-y-1 text-gray-600">
                                 <div>📁 {storageStats.totalFiles} 个文件</div>
@@ -2980,7 +3007,7 @@
                                         ⚠️ 存储空间严重不足
                                     </div>
                                 )}
-                            </div>
+                                                        </div>
                             
                             {/* 错误状态下显示更多信息 */}
                             {storageStats.syncStatus === 'error' && (
@@ -2995,7 +3022,7 @@
                             <div className="border-t p-3 bg-gray-50">
                                 <div className="text-xs font-medium text-gray-700 mb-2">存储管理</div>
                                 <div className="space-y-2">
-                                    <button
+                                                            <button
                                         onClick={() => handleManualCleanup(false)}
                                         disabled={isCleaningUp}
                                         className="w-full px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-xs disabled:opacity-50"
@@ -3015,16 +3042,16 @@
                                         className="w-full px-2 py-1 bg-red-100 hover:bg-red-200 text-red-700 rounded text-xs disabled:opacity-50"
                                     >
                                         🗑️ 清空所有数据
-                                    </button>
-                                </div>
+                                                            </button>
+                                                        </div>
                                 <div className="text-xs text-gray-500 mt-2">
                                     <div>• 智能清理：保留30天数据</div>
                                     <div>• 深度清理：仅保留7天数据</div>
                                 </div>
                             </div>
                         )}
-                    </div>
-                );
+                                                    </div>
+                                                );
             };
 
                 return (
@@ -3052,16 +3079,16 @@
                                                 >
                                                     退出
                                                 </button>
-                                            </div>
-                                        ) : (
+                                    </div>
+                                ) : (
                                             <div className="flex items-center gap-2">
                                                 <span className="text-orange-600">🟡</span>
                                                 <span>本地存储</span>
                                                 <ConnectionChecker showTemporaryMessage={showTemporaryMessage} />
                                                 <AuthModal showTemporaryMessage={showTemporaryMessage} />
                                                             </div>
-                                                        )}
-                                    </div>
+                                )}
+                            </div>
                                 ) : (
                                     <div className="flex items-center gap-2">
                                         <span className="text-gray-400">⚫</span>
@@ -3077,14 +3104,25 @@
                                 <div className="flex flex-col items-end gap-2 mb-4">
                                     {/* 今日内容快速发布按钮 */}
                                     <div className="flex gap-2 mb-2">
-                                                            <button
+                                        <button
+                                            onClick={() => setMediaDisplayMode(mediaDisplayMode === 'fit' ? 'fill' : 'fit')}
+                                            className={`text-xs px-2 py-1 rounded transition-colors ${
+                                                mediaDisplayMode === 'fit' 
+                                                    ? 'bg-green-50 text-green-600 hover:bg-green-100' 
+                                                    : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                                            }`}
+                                            title={mediaDisplayMode === 'fit' ? '切换到填满模式' : '切换到适应模式'}
+                                        >
+                                            {mediaDisplayMode === 'fit' ? '📐 适应' : '📏 填满'}
+                                        </button>
+                                        <button
                                             onClick={exportTodayContent}
                                             className="text-xs px-2 py-1 bg-purple-50 text-purple-600 rounded hover:bg-purple-100 transition-colors"
                                             title="复制今日发布内容"
                                         >
                                             📋 今日内容
-                                                            </button>
-                                                        </div>
+                                        </button>
+                                    </div>
                                     
                                     {/* 快速发布按钮 */}
                                     {(() => {
