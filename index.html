@@ -45,6 +45,9 @@
         .carousel-indicator {
             transition: all 0.3s ease;
         }
+        .aspect-9-16 {
+            aspect-ratio: 9 / 16;
+        }
         .media-container {
             position: relative;
             width: 100%;
@@ -298,7 +301,7 @@
                 for (let i = 0; i < firstDayIndex; i++) {
                     days.push(
                         <div key={`empty-${i}`} className="flex flex-col">
-                            <div className="aspect-square calendar-cell bg-white"></div>
+                            <div className="aspect-9-16 calendar-cell bg-white"></div>
                             <div className="flex justify-center py-2">
                                 <span className="text-transparent text-sm">+</span>
                             </div>
@@ -321,7 +324,7 @@
 
                     days.push(
                         <div key={dayKey} className="flex flex-col">
-                            <div className={`relative ${cellClass} aspect-square`}>
+                            <div className={`relative ${cellClass} aspect-9-16`}>
                                 <div className="absolute top-2 left-2 text-xs text-gray-400 z-10" style={{fontWeight: 300}}>{day}</div>
                                 
                                 {/* 主要内容区域 - 占满整个格子 */}
