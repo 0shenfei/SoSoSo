@@ -188,29 +188,50 @@
                                 // 暂时跳过文件上传，仅保存文案和平台信息
                                 let uploadedFiles = post.files || [];
                                 
-                                // TODO: 文件上传功能暂时禁用，避免页面崩溃
-                                if (false && post.files && post.files.length > 0) {
+                                // 重新启用文件上传功能，使用更安全的方式
+                                if (post.files && post.files.length > 0) {
                                     if (DEBUG_MODE) console.log(`正在上传 ${post.files.length} 个文件...`);
                                     
+                                    uploadedFiles = []; // 重新初始化
+                                    
                                     for (const fileData of post.files) {
-                                        if (fileData.file && !fileData.cloudUrl) {
-                                            const uploadResult = await this.uploadFile(fileData.file, fileData.name, user.id);
-                                            if (uploadResult) {
+                                        try {
+                                            if (fileData.file && !fileData.cloudUrl && !fileData.uploaded) {
+                                                // 尝试上传新文件
+                                                if (DEBUG_MODE) console.log(`尝试上传文件: ${fileData.name}`);
+                                                const uploadResult = await this.uploadFile(fileData.file, fileData.name, user.id);
+                                                
+                                                if (uploadResult) {
+                                                    uploadedFiles.push({
+                                                        ...fileData,
+                                                        cloudUrl: uploadResult.publicUrl,
+                                                        cloudPath: uploadResult.filePath,
+                                                        uploaded: true,
+                                                        file: null // 清除原始文件对象，节省内存
+                                                    });
+                                                    if (DEBUG_MODE) console.log(`文件上传成功: ${fileData.name}`);
+                                                } else {
+                                                    // 上传失败，保留原始数据但标记为本地文件
+                                                    uploadedFiles.push({
+                                                        ...fileData,
+                                                        uploaded: false
+                                                    });
+                                                    if (DEBUG_MODE) console.log(`文件上传失败，保留本地: ${fileData.name}`);
+                                                }
+                                            } else {
+                                                // 已经上传过的文件或已有云端URL
                                                 uploadedFiles.push({
                                                     ...fileData,
-                                                    cloudUrl: uploadResult.publicUrl,
-                                                    cloudPath: uploadResult.filePath,
-                                                    uploaded: true
+                                                    uploaded: fileData.cloudUrl ? true : false
                                                 });
-                                                if (DEBUG_MODE) console.log(`文件上传成功: ${fileData.name}`);
-                                            } else {
-                                                // 上传失败，保留原始数据
-                                                uploadedFiles.push(fileData);
-                                                if (DEBUG_MODE) console.log(`文件上传失败: ${fileData.name}`);
                                             }
-                                        } else {
-                                            // 已经上传过的文件或没有原始文件
-                                            uploadedFiles.push(fileData);
+                                        } catch (fileError) {
+                                            if (DEBUG_MODE) console.error(`处理文件失败: ${fileData.name}`, fileError);
+                                            // 即使出错也保留文件
+                                            uploadedFiles.push({
+                                                ...fileData,
+                                                uploaded: false
+                                            });
                                         }
                                     }
                                 }
@@ -271,7 +292,18 @@
                         }
                     }
 
-                    console.log('云端保存完成');
+                                                        if (DEBUG_MODE) console.log('云端保存完成');
+                                    
+                                    // 统计上传结果
+                                    const totalFiles = Object.values(posts).reduce((total, dayPosts) => {
+                                        return total + dayPosts.reduce((dayTotal, post) => {
+                                            return dayTotal + (post.files ? post.files.length : 0);
+                                        }, 0);
+                                    }, 0);
+                                    
+                                    if (totalFiles > 0) {
+                                        if (DEBUG_MODE) console.log(`处理了 ${totalFiles} 个文件`);
+                                    }
                 } catch (error) {
                     console.error('Supabase保存错误:', error);
                 }
@@ -582,13 +614,36 @@
                         const currentUser = await SupabaseService.getCurrentUser();
                         setUser(currentUser);
 
-                        // 如果用户已登录，尝试从云端加载数据
+                        // 如果用户已登录，智能合并本地和云端数据
                         if (currentUser) {
                             const cloudPosts = await SupabaseService.loadPosts();
                             if (cloudPosts && Object.keys(cloudPosts).length > 0) {
-                                // 优先使用云端数据（包含已上传的文件）
-                                setScheduledPosts(cloudPosts);
-                                showTemporaryMessage('云端数据已同步！', 'success');
+                                // 智能合并：保留本地文件，同步云端文案
+                                setScheduledPosts(prevPosts => {
+                                    const mergedPosts = { ...prevPosts };
+                                    
+                                    Object.entries(cloudPosts).forEach(([date, cloudDayPosts]) => {
+                                        cloudDayPosts.forEach((cloudPost, index) => {
+                                            if (mergedPosts[date] && mergedPosts[date][index]) {
+                                                // 保留本地文件，更新云端文案
+                                                const localFiles = mergedPosts[date][index].files || [];
+                                                const cloudFiles = cloudPost.files || [];
+                                                
+                                                mergedPosts[date][index] = {
+                                                    ...cloudPost,
+                                                    files: localFiles.length > 0 ? localFiles : cloudFiles
+                                                };
+                                            } else {
+                                                // 新的云端数据
+                                                if (!mergedPosts[date]) mergedPosts[date] = [];
+                                                mergedPosts[date][index] = cloudPost;
+                                            }
+                                        });
+                                    });
+                                    
+                                    return mergedPosts;
+                                });
+                                showTemporaryMessage('数据已同步（本地文件优先保留）', 'success');
                             } else {
                                 showTemporaryMessage('已登录，本地数据将上传到云端', 'success');
                             }
@@ -612,9 +667,32 @@
                                 showTemporaryMessage('登录成功！正在同步数据...', 'success');
                                 const cloudPosts = await SupabaseService.loadPosts();
                                 if (cloudPosts && Object.keys(cloudPosts).length > 0) {
-                                    // 使用云端完整数据（包含文件）
-                                    setScheduledPosts(cloudPosts);
-                                    showTemporaryMessage('云端数据同步完成！', 'success');
+                                    // 智能合并：保留本地文件，同步云端文案
+                                    setScheduledPosts(prevPosts => {
+                                        const mergedPosts = { ...prevPosts };
+                                        
+                                        Object.entries(cloudPosts).forEach(([date, cloudDayPosts]) => {
+                                            cloudDayPosts.forEach((cloudPost, index) => {
+                                                if (mergedPosts[date] && mergedPosts[date][index]) {
+                                                    // 保留本地文件，更新云端文案
+                                                    const localFiles = mergedPosts[date][index].files || [];
+                                                    const cloudFiles = cloudPost.files || [];
+                                                    
+                                                    mergedPosts[date][index] = {
+                                                        ...cloudPost,
+                                                        files: localFiles.length > 0 ? localFiles : cloudFiles
+                                                    };
+                                                } else {
+                                                    // 新的云端数据
+                                                    if (!mergedPosts[date]) mergedPosts[date] = [];
+                                                    mergedPosts[date][index] = cloudPost;
+                                                }
+                                            });
+                                        });
+                                        
+                                        return mergedPosts;
+                                    });
+                                    showTemporaryMessage('数据同步完成（本地文件已保留）', 'success');
                                 } else {
                                     showTemporaryMessage('登录成功！本地数据将上传到云端', 'success');
                                 }
