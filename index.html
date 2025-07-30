@@ -115,14 +115,15 @@
                         .from('media-files')
                         .getPublicUrl(filePath);
 
-                    console.log(`文件上传成功: ${fileName} -> ${publicUrl}`);
+                                    console.log(`文件上传成功: ${fileName} -> ${publicUrl}`);
 
-                    return {
-                        filePath: filePath,
-                        publicUrl: publicUrl,
-                        fileName: fileName,
-                        fileSize: file.size
-                    };
+                return {
+                    filePath: filePath,
+                    publicUrl: publicUrl,
+                    fileName: fileName,
+                    fileSize: file.size,
+                    fileType: file.type
+                };
                 } catch (error) {
                     console.error('上传文件错误:', error);
                     return null;
@@ -207,6 +208,9 @@
                                                         cloudUrl: uploadResult.publicUrl,
                                                         cloudPath: uploadResult.filePath,
                                                         uploaded: true,
+                                                        // 对于视频，保留缩略图作为预览，云端URL作为播放源
+                                                        dataUrl: fileData.type === 'video' ? fileData.thumbnail : fileData.dataUrl,
+                                                        originalDataUrl: uploadResult.publicUrl, // 使用云端URL作为原始URL
                                                         file: null // 清除原始文件对象，节省内存
                                                     });
                                                     if (DEBUG_MODE) console.log(`文件上传成功: ${fileData.name}`);
@@ -347,17 +351,21 @@
                             if (!posts[post.date]) posts[post.date] = [];
                             
                             // 处理媒体文件
-                            const files = (post.media_files || []).map(mediaFile => ({
-                                name: mediaFile.original_name || mediaFile.file_name,
-                                type: mediaFile.file_type === 'image' ? 'image/jpeg' : 'video/mp4',
-                                size: mediaFile.file_size || 0,
-                                dataUrl: mediaFile.compressed_url || mediaFile.file_url,
-                                originalDataUrl: mediaFile.file_url,
-                                cloudUrl: mediaFile.file_url,
-                                cloudPath: mediaFile.file_name,
-                                thumbnail: mediaFile.thumbnail_url,
-                                uploaded: true
-                            }));
+                            const files = (post.media_files || []).map(mediaFile => {
+                                const isVideo = mediaFile.file_type === 'video';
+                                return {
+                                    name: mediaFile.original_name || mediaFile.file_name,
+                                    type: isVideo ? 'video' : 'image',
+                                    size: mediaFile.file_size || 0,
+                                    // 对于视频：dataUrl用缩略图预览，originalDataUrl和cloudUrl用云端URL
+                                    dataUrl: isVideo ? (mediaFile.thumbnail_url || mediaFile.compressed_url) : (mediaFile.compressed_url || mediaFile.file_url),
+                                    originalDataUrl: mediaFile.file_url, // 云端URL，用于播放
+                                    cloudUrl: mediaFile.file_url, // 云端URL
+                                    cloudPath: mediaFile.file_name,
+                                    thumbnail: mediaFile.thumbnail_url,
+                                    uploaded: true
+                                };
+                            });
 
                             posts[post.date].push({
                                 caption: post.caption,
@@ -1166,27 +1174,62 @@
                                                                 currentIndex: currentFileIndex
                                                             })}
                                                         >
-                                                            {/* 优先显示视频，如果有完整视频数据 */}
-                                                            {currentFile.dataUrl && currentFile.dataUrl.startsWith('data:video/') ? (
-                                                                <video
-                                                                    src={currentFile.dataUrl}
-                                                                    className="w-full h-full object-cover calendar-video"
-                                                                    autoPlay
-                                                                    muted
-                                                                    loop
-                                                                    playsInline
-                                                                    onClick={(e) => e.stopPropagation()}
-                                                                />
-                                                            ) : currentFile.thumbnail ? (
+                                                            {/* 智能视频显示：支持云端URL和本地URL */}
+                                                            {(() => {
+                                                                // 优先使用云端视频URL，然后是本地压缩视频，最后是缩略图
+                                                                const videoSrc = currentFile.cloudUrl || 
+                                                                               (currentFile.dataUrl && currentFile.dataUrl.startsWith('data:video/') ? currentFile.dataUrl : null) ||
+                                                                               (currentFile.originalDataUrl && currentFile.originalDataUrl.startsWith('data:video/') ? currentFile.originalDataUrl : null);
+                                                                
+                                                                if (videoSrc) {
+                                                                    return (
+                                                                        <video
+                                                                            src={videoSrc}
+                                                                            className="w-full h-full object-cover calendar-video"
+                                                                            autoPlay
+                                                                            muted
+                                                                            loop
+                                                                            playsInline
+                                                                            preload="metadata"
+                                                                            onClick={(e) => e.stopPropagation()}
+                                                                            onError={(e) => {
+                                                                                console.error('日历视频加载失败:', videoSrc);
+                                                                                // 如果视频加载失败，显示缩略图
+                                                                                e.target.style.display = 'none';
+                                                                                const fallback = e.target.parentElement.querySelector('img[alt="视频缩略图"]');
+                                                                                if (fallback) {
+                                                                                    fallback.style.display = 'block';
+                                                                                }
+                                                                            }}
+                                                                            onLoadedData={() => {
+                                                                                if (DEBUG_MODE) console.log('视频加载成功:', videoSrc);
+                                                                            }}
+                                                                        />
+                                                                    );
+                                                                }
+                                                                
+                                                                // 显示缩略图作为后备
+                                                                return currentFile.thumbnail ? (
+                                                                    <img
+                                                                        src={currentFile.thumbnail}
+                                                                        alt="视频缩略图"
+                                                                        className="w-full h-full object-cover"
+                                                                    />
+                                                                ) : (
+                                                                    <div className="w-full h-full bg-gray-200 flex items-center justify-center">
+                                                                        <span className="text-4xl">🎥</span>
+                                                                    </div>
+                                                                );
+                                                            })()}
+                                                            
+                                                            {/* 缩略图后备显示 */}
+                                                            {currentFile.thumbnail && (
                                                                 <img
                                                                     src={currentFile.thumbnail}
                                                                     alt="视频缩略图"
                                                                     className="w-full h-full object-cover"
+                                                                    style={{ display: 'none' }}
                                                                 />
-                                                            ) : (
-                                                                <div className="w-full h-full bg-gray-200 flex items-center justify-center">
-                                                                    <span className="text-4xl">🎥</span>
-                                                                </div>
                                                             )}
                                                         </div>
                                                     );
@@ -1527,18 +1570,31 @@
                                                     />
                                                 );
                                             } else if (currentMedia.type === 'video') {
-                                                // 优先使用dataUrl（如果是完整视频），否则使用originalDataUrl，最后使用thumbnail
-                                                const videoSrc = (currentMedia.dataUrl && currentMedia.dataUrl.startsWith('data:video/')) 
-                                                    ? currentMedia.dataUrl 
-                                                    : currentMedia.originalDataUrl || currentMedia.thumbnail;
+                                                // 智能选择视频源：云端URL > 本地压缩视频 > 原始视频 > 缩略图
+                                                const videoSrc = currentMedia.cloudUrl ||  // 优先使用云端URL
+                                                               (currentMedia.dataUrl && currentMedia.dataUrl.startsWith('data:video/') ? currentMedia.dataUrl : null) ||
+                                                               (currentMedia.originalDataUrl && currentMedia.originalDataUrl.startsWith('data:video/') ? currentMedia.originalDataUrl : null) ||
+                                                               (currentMedia.dataUrl && currentMedia.dataUrl.startsWith('blob:') ? currentMedia.dataUrl : null) ||
+                                                               (currentMedia.originalDataUrl && currentMedia.originalDataUrl.startsWith('blob:') ? currentMedia.originalDataUrl : null);
                                                 
-                                                if (videoSrc && (videoSrc.startsWith('data:video/') || videoSrc.startsWith('blob:'))) {
+                                                if (videoSrc) {
                                                     return (
                                                         <video
                                                             src={videoSrc}
                                                             controls
                                                             autoPlay
                                                             className="max-w-full max-h-full object-contain rounded-lg"
+                                                            onError={(e) => {
+                                                                console.error('视频加载失败:', videoSrc);
+                                                                // 如果云端视频失败，尝试本地视频
+                                                                if (currentMedia.cloudUrl && (currentMedia.dataUrl || currentMedia.originalDataUrl)) {
+                                                                    const fallbackSrc = (currentMedia.dataUrl && currentMedia.dataUrl.startsWith('data:video/')) ? 
+                                                                                       currentMedia.dataUrl : currentMedia.originalDataUrl;
+                                                                    if (fallbackSrc && fallbackSrc !== videoSrc) {
+                                                                        e.target.src = fallbackSrc;
+                                                                    }
+                                                                }
+                                                            }}
                                                         >
                                                             您的浏览器不支持视频标签。
                                                         </video>
