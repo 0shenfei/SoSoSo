@@ -178,11 +178,25 @@
 
                 } catch (error) {
                     console.error(`❌ 文件 ${file.name} 处理失败:`, error);
+                    
+                    // 根据错误类型提供更具体的错误信息
+                    let errorMessage = error.message;
+                    if (error.name === 'QuotaExceededError') {
+                        errorMessage = '文件过大，超出存储限制';
+                    } else if (error.message.includes('network')) {
+                        errorMessage = '网络错误，请检查连接';
+                    } else if (error.message.includes('format')) {
+                        errorMessage = '文件格式不支持';
+                    } else if (error.message.includes('canvas')) {
+                        errorMessage = '图片处理失败，可能文件损坏';
+                    }
+                    
                     // 返回基础信息，即使处理失败
                     return {
                         ...result,
-                        error: error.message,
-                        dataUrl: result.thumbnail || null
+                        error: errorMessage,
+                        dataUrl: result.thumbnail || null,
+                        hasError: true
                     };
                 }
             }
@@ -323,6 +337,46 @@
                 };
 
                 return this.storageStats;
+            }
+
+            // 🧹 清理存储空间
+            cleanupStorage(posts) {
+                console.log('🧹 开始清理存储空间...');
+                let cleaned = false;
+                
+                // 1. 清理30天前的数据
+                const thirtyDaysAgo = new Date();
+                thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+                
+                Object.keys(posts).forEach(dateKey => {
+                    const postDate = new Date(dateKey);
+                    if (postDate < thirtyDaysAgo) {
+                        console.log(`🗑️ 清理过期数据: ${dateKey}`);
+                        delete posts[dateKey];
+                        cleaned = true;
+                    }
+                });
+                
+                // 2. 压缩大文件的DataURL
+                Object.values(posts).forEach(dayPosts => {
+                    dayPosts.forEach(post => {
+                        if (post.files) {
+                            post.files.forEach(file => {
+                                if (file.dataUrl && file.dataUrl.length > 1024 * 1024 && !file.isCompressed) {
+                                    // 如果DataURL超过1MB且未压缩，标记需要重新处理
+                                    file.needsReprocessing = true;
+                                    cleaned = true;
+                                }
+                            });
+                        }
+                    });
+                });
+                
+                if (cleaned) {
+                    console.log('✅ 存储清理完成');
+                }
+                
+                return posts;
             }
         }
 
@@ -999,9 +1053,37 @@
 
             // 📦 智能存储和同步逻辑
             React.useEffect(() => {
+                // 防止空数据触发存储
+                if (!scheduledPosts || Object.keys(scheduledPosts).length === 0) {
+                    return;
+                }
+
                 try {
                     // 1. 立即保存到本地存储
-                    localStorage.setItem('socialMediaCalendar', JSON.stringify(scheduledPosts));
+                    const dataToStore = JSON.stringify(scheduledPosts);
+                    
+                    // 检查localStorage可用性和数据大小
+                    if (dataToStore.length > 5 * 1024 * 1024) { // 5MB限制
+                        console.warn('⚠️ 数据过大，尝试自动清理...');
+                        
+                        // 自动清理存储空间
+                        const cleanedPosts = storageManager.cleanupStorage({...scheduledPosts});
+                        const cleanedDataToStore = JSON.stringify(cleanedPosts);
+                        
+                        if (cleanedDataToStore.length < dataToStore.length) {
+                            console.log('✅ 自动清理完成，数据大小减少');
+                            localStorage.setItem('socialMediaCalendar', cleanedDataToStore);
+                            showTemporaryMessage('✅ 自动清理完成，存储空间已优化', 'success');
+                            
+                            // 更新React状态以反映清理后的数据
+                            setScheduledPosts(cleanedPosts);
+                            return;
+                        } else {
+                            showTemporaryMessage('⚠️ 数据量较大，建议手动删除一些旧内容', 'warning');
+                        }
+                    }
+                    
+                    localStorage.setItem('socialMediaCalendar', dataToStore);
                     console.log('✅ 本地存储已更新');
                     
                     // 2. 更新存储统计
@@ -1054,8 +1136,16 @@
                         return () => clearTimeout(delayedSync);
                     }
                 } catch (error) {
-                    console.error('❌ 存储失败:', error);
-                    showTemporaryMessage('存储失败，请重试', 'error');
+                    console.error('❌ 本地存储失败:', error);
+                    
+                    // 详细的错误处理
+                    if (error.name === 'QuotaExceededError' || error.code === 22) {
+                        showTemporaryMessage('❌ 存储空间不足，请清理浏览器数据或删除一些文件', 'error');
+                    } else if (error.message.includes('localStorage')) {
+                        showTemporaryMessage('❌ 浏览器存储被禁用，请检查隐私设置', 'error');
+                    } else {
+                        showTemporaryMessage('❌ 数据保存失败，请刷新页面重试', 'error');
+                    }
                 }
             }, [scheduledPosts, user]);
 
@@ -1524,8 +1614,17 @@
                         console.log('📊 存储统计:', stats);
                         
                     } catch (error) {
-                        showTemporaryMessage('文件处理失败。', 'error');
-                        return;
+                        console.error('❌ 文件批量处理失败:', error);
+                        
+                        // 检查是否有成功处理的文件
+                        const validFiles = newPost.files.filter(file => !file.error);
+                        if (validFiles.length > 0) {
+                            newPost.files = validFiles;
+                            showTemporaryMessage(`⚠️ ${selectedFiles.length - validFiles.length} 个文件处理失败，${validFiles.length} 个文件成功保存`, 'warning');
+                        } else {
+                            showTemporaryMessage('❌ 所有文件处理失败，请检查文件格式和大小', 'error');
+                            return;
+                        }
                     }
                 }
 
@@ -1765,6 +1864,14 @@
                     }
                 };
                 
+                // 检查存储空间使用率
+                const getStorageUsageColor = () => {
+                    const usage = storageStats.localSize / (10 * 1024 * 1024); // 假设10MB为满容量
+                    if (usage > 0.8) return 'text-red-500';
+                    if (usage > 0.6) return 'text-yellow-500';
+                    return 'text-green-500';
+                };
+
                 return (
                     <div className="fixed bottom-4 left-4 z-40 bg-white rounded-lg shadow-lg p-3 border text-xs max-w-xs">
                         <div className="flex items-center gap-2 mb-2">
@@ -1773,11 +1880,27 @@
                         </div>
                         <div className="space-y-1 text-gray-600">
                             <div>📁 {storageStats.totalFiles} 个文件</div>
-                            <div>💾 本地: {formatSize(storageStats.localSize)}</div>
+                            <div className={`💾 本地: ${formatSize(storageStats.localSize)} ${getStorageUsageColor()}`}>
+                                💾 本地: <span className={getStorageUsageColor()}>{formatSize(storageStats.localSize)}</span>
+                            </div>
                             {storageStats.cloudSize > 0 && (
                                 <div>☁️ 云端: {formatSize(storageStats.cloudSize)}</div>
                             )}
+                            
+                            {/* 存储空间警告 */}
+                            {storageStats.localSize > 8 * 1024 * 1024 && (
+                                <div className="text-red-500 text-xs mt-1">
+                                    ⚠️ 存储空间不足
+                                </div>
+                            )}
                         </div>
+                        
+                        {/* 错误状态下显示更多信息 */}
+                        {storageStats.syncStatus === 'error' && (
+                            <div className="mt-2 pt-2 border-t text-xs text-red-500">
+                                💡 检查网络连接或刷新页面重试
+                            </div>
+                        )}
                     </div>
                 );
             };
