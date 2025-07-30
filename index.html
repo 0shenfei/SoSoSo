@@ -651,49 +651,186 @@
                 return this.storageStats;
             }
 
-            // 🧹 清理存储空间
-            cleanupStorage(posts) {
-                console.log('🧹 开始清理存储空间...');
-                let cleaned = false;
+            // 🧹 智能存储清理
+            cleanupStorage(posts, options = {}) {
+                console.log('🧹 开始智能存储清理...');
                 
-                // 1. 清理30天前的数据
-                const thirtyDaysAgo = new Date();
-                thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+                const {
+                    maxAgeDays = 30,     // 最大保留天数
+                    maxSizeMB = 8,       // 最大本地存储大小(MB)
+                    aggressive = false   // 激进清理模式
+                } = options;
+                
+                let cleaned = false;
+                let cleanupReport = {
+                    deletedDates: [],
+                    compressedFiles: 0,
+                    deletedFiles: 0,
+                    freedSpace: 0
+                };
+                
+                // 1. 清理过期数据
+                const cutoffDate = new Date();
+                cutoffDate.setDate(cutoffDate.getDate() - maxAgeDays);
                 
                 Object.keys(posts).forEach(dateKey => {
                     const postDate = new Date(dateKey);
-                    if (postDate < thirtyDaysAgo) {
+                    if (postDate < cutoffDate) {
                         console.log(`🗑️ 清理过期数据: ${dateKey}`);
+                        cleanupReport.deletedDates.push(dateKey);
                         delete posts[dateKey];
                         cleaned = true;
                     }
                 });
                 
-                // 2. 压缩大文件的DataURL
-                Object.values(posts).forEach(dayPosts => {
-                    dayPosts.forEach(post => {
-                        if (post.files) {
-                            post.files.forEach(file => {
-                                if (file.dataUrl && file.dataUrl.length > 1024 * 1024 && !file.isCompressed) {
-                                    // 如果DataURL超过1MB且未压缩，标记需要重新处理
-                                    file.needsReprocessing = true;
-                                    cleaned = true;
-                                }
-                            });
-                        }
-                    });
-                });
+                // 2. 计算当前存储大小
+                let currentSizeMB = this.calculateLocalStorageSize() / (1024 * 1024);
                 
-                if (cleaned) {
-                    console.log('✅ 存储清理完成');
+                if (currentSizeMB > maxSizeMB || aggressive) {
+                    console.log(`📊 当前存储: ${currentSizeMB.toFixed(2)}MB, 开始清理...`);
+                    
+                    // 3. 优先清理大文件的DataURL（保留缩略图）
+                    Object.values(posts).forEach(dayPosts => {
+                        dayPosts.forEach(post => {
+                            if (post.files) {
+                                post.files.forEach(file => {
+                                    const sizeBefore = file.dataUrl ? file.dataUrl.length : 0;
+                                    
+                                    // 清理大视频的DataURL，只保留缩略图
+                                    if (file.type === 'video' && file.dataUrl && file.dataUrl.length > 2 * 1024 * 1024) {
+                                        if (file.thumbnail) {
+                                            console.log(`🎥 清理视频DataURL，保留缩略图: ${file.name}`);
+                                            file.dataUrl = file.thumbnail;
+                                            file.needsReprocessing = true;
+                                            cleanupReport.compressedFiles++;
+                                            cleanupReport.freedSpace += sizeBefore - file.dataUrl.length;
+                                            cleaned = true;
+                                        } else if (aggressive) {
+                                            console.log(`🗑️ 激进模式：删除无缩略图的大视频: ${file.name}`);
+                                            file.dataUrl = null;
+                                            file.originalDataUrl = null;
+                                            cleanupReport.deletedFiles++;
+                                            cleanupReport.freedSpace += sizeBefore;
+                                            cleaned = true;
+                                        }
+                                    }
+                                    
+                                    // 清理大图片，压缩质量
+                                    else if (file.type === 'image' && file.dataUrl && file.dataUrl.length > 1 * 1024 * 1024) {
+                                        if (aggressive || !file.isCompressed) {
+                                            console.log(`🖼️ 标记大图片需要重新压缩: ${file.name}`);
+                                            file.needsReprocessing = true;
+                                            cleanupReport.compressedFiles++;
+                                            cleaned = true;
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    });
+                    
+                    // 4. 如果还是太大，激进清理：删除最老的数据
+                    if (aggressive && currentSizeMB > maxSizeMB * 1.5) {
+                        const sortedDates = Object.keys(posts).sort();
+                        const deleteCount = Math.ceil(sortedDates.length * 0.3); // 删除30%的最老数据
+                        
+                        for (let i = 0; i < deleteCount && i < sortedDates.length; i++) {
+                            const dateKey = sortedDates[i];
+                            console.log(`🔥 激进清理：删除老数据 ${dateKey}`);
+                            cleanupReport.deletedDates.push(dateKey);
+                            delete posts[dateKey];
+                            cleaned = true;
+                        }
+                    }
                 }
                 
-                return posts;
+                if (cleaned) {
+                    console.log('✅ 智能存储清理完成', cleanupReport);
+                    return { posts, cleanupReport, cleaned: true };
+                }
+                
+                return { posts, cleanupReport, cleaned: false };
+            }
+
+            // 🗑️ 清空所有本地数据
+            clearAllData() {
+                console.log('🗑️ 清空所有本地数据...');
+                try {
+                    localStorage.removeItem('socialMediaCalendar');
+                    this.storageStats = {
+                        localSize: 0,
+                        cloudSize: 0,
+                        totalFiles: 0,
+                        syncStatus: 'idle'
+                    };
+                    return true;
+                } catch (error) {
+                    console.error('清空数据失败:', error);
+                    return false;
+                }
             }
         }
 
         // 全局存储管理器实例
         const storageManager = new SmartStorageManager();
+        
+        // 🚨 存储预警系统
+        class StorageWarningSystem {
+            constructor() {
+                this.lastWarningTime = 0;
+                this.warningCooldown = 5 * 60 * 1000; // 5分钟冷却期
+                this.criticalThreshold = 8 * 1024 * 1024; // 8MB严重阈值
+                this.warningThreshold = 6 * 1024 * 1024;  // 6MB警告阈值
+            }
+            
+            checkStorageStatus(storageSize, showMessageFunc) {
+                const now = Date.now();
+                if (now - this.lastWarningTime < this.warningCooldown) {
+                    return; // 冷却期内不重复警告
+                }
+                
+                if (storageSize > this.criticalThreshold) {
+                    this.lastWarningTime = now;
+                    showMessageFunc(
+                        '🚨 存储空间严重不足！建议立即清理数据，否则可能无法保存新内容', 
+                        'error'
+                    );
+                    return 'critical';
+                } else if (storageSize > this.warningThreshold) {
+                    this.lastWarningTime = now;
+                    showMessageFunc(
+                        '⚠️ 存储空间不足，建议清理数据以确保正常使用', 
+                        'warning'
+                    );
+                    return 'warning';
+                }
+                
+                return 'normal';
+            }
+            
+            // 智能推荐清理方案
+            recommendCleanupStrategy(storageSize) {
+                if (storageSize > this.criticalThreshold) {
+                    return {
+                        strategy: 'aggressive',
+                        message: '建议使用深度清理，删除7天前的数据',
+                        maxAgeDays: 7,
+                        maxSizeMB: 2
+                    };
+                } else if (storageSize > this.warningThreshold) {
+                    return {
+                        strategy: 'normal',
+                        message: '建议使用智能清理，压缩大文件',
+                        maxAgeDays: 30,
+                        maxSizeMB: 4
+                    };
+                }
+                
+                return null;
+            }
+        }
+        
+        const storageWarning = new StorageWarningSystem();
 
         // 图标组件
         const ChevronLeft = () => <span>‹</span>;
@@ -1509,24 +1646,41 @@
                     // 1. 立即保存到本地存储
                     const dataToStore = JSON.stringify(scheduledPosts);
                     
-                    // 检查localStorage可用性和数据大小
-                    if (dataToStore.length > 5 * 1024 * 1024) { // 5MB限制
-                        console.warn('⚠️ 数据过大，尝试自动清理...');
+                    // 智能存储空间管理
+                    const dataSizeMB = dataToStore.length / (1024 * 1024);
+                    console.log(`📊 数据大小: ${dataSizeMB.toFixed(2)}MB`);
+                    
+                    if (dataSizeMB > 5) { // 5MB限制
+                        console.warn('⚠️ 数据过大，启动智能清理...');
+                        showTemporaryMessage('🧹 存储空间不足，正在自动清理...', 'info');
                         
-                        // 自动清理存储空间
-                        const cleanedPosts = storageManager.cleanupStorage({...scheduledPosts});
-                        const cleanedDataToStore = JSON.stringify(cleanedPosts);
+                        // 智能清理存储空间
+                        const cleanupResult = storageManager.cleanupStorage({...scheduledPosts}, {
+                            maxSizeMB: 4,
+                            maxAgeDays: 30,
+                            aggressive: dataSizeMB > 8 // 超过8MB启用激进模式
+                        });
                         
-                        if (cleanedDataToStore.length < dataToStore.length) {
-                            console.log('✅ 自动清理完成，数据大小减少');
+                        if (cleanupResult.cleaned) {
+                            const cleanedDataToStore = JSON.stringify(cleanupResult.posts);
+                            const newSizeMB = cleanedDataToStore.length / (1024 * 1024);
+                            
+                            console.log(`✅ 智能清理完成: ${dataSizeMB.toFixed(2)}MB → ${newSizeMB.toFixed(2)}MB`);
                             localStorage.setItem('socialMediaCalendar', cleanedDataToStore);
-                            showTemporaryMessage('✅ 自动清理完成，存储空间已优化', 'success');
+                            
+                            // 显示清理报告
+                            const report = cleanupResult.cleanupReport;
+                            const freedMB = ((dataToStore.length - cleanedDataToStore.length) / (1024 * 1024)).toFixed(1);
+                            showTemporaryMessage(
+                                `🧹 清理完成: 释放 ${freedMB}MB，优化 ${report.compressedFiles + report.deletedFiles} 个文件`,
+                                'success'
+                            );
                             
                             // 更新React状态以反映清理后的数据
-                            setScheduledPosts(cleanedPosts);
+                            setScheduledPosts(cleanupResult.posts);
                             return;
                         } else {
-                            showTemporaryMessage('⚠️ 数据量较大，建议手动删除一些旧内容', 'warning');
+                            showTemporaryMessage('⚠️ 自动清理无法释放足够空间，建议手动管理数据', 'warning');
                         }
                     }
                     
@@ -1535,6 +1689,17 @@
                     
                     // 2. 更新存储统计
                     const stats = storageManager.updateStats(scheduledPosts);
+                    
+                    // 3. 存储空间预警检查
+                    const storageStatus = storageWarning.checkStorageStatus(stats.localSize, showTemporaryMessage);
+                    
+                    // 如果存储空间紧张，显示清理建议
+                    if (storageStatus !== 'normal') {
+                        const recommendation = storageWarning.recommendCleanupStrategy(stats.localSize);
+                        if (recommendation) {
+                            console.log('💡 清理建议:', recommendation.message);
+                        }
+                    }
                     
                     // 3. 智能云端同步策略
                     if (user && isSupabaseConfigured && STORAGE_CONFIG.AUTO_CLOUD_SYNC) {
@@ -1585,14 +1750,48 @@
                 } catch (error) {
                     console.error('❌ 本地存储失败:', error);
                     
-                    // 详细的错误处理
+                    // 智能错误处理和自动修复
                     if (error.name === 'QuotaExceededError' || error.code === 22) {
-                        showTemporaryMessage('❌ 存储空间不足，请清理浏览器数据或删除一些文件', 'error');
+                        console.warn('💾 存储配额超限，尝试激进清理...');
+                        showTemporaryMessage('🔧 存储空间严重不足，正在紧急清理...', 'warning');
+                        
+                        try {
+                            // 激进清理模式：更短的保留期和更小的限制
+                            const emergencyCleanup = storageManager.cleanupStorage({...scheduledPosts}, {
+                                maxSizeMB: 2,
+                                maxAgeDays: 7,     // 仅保留7天数据
+                                aggressive: true   // 启用激进模式
+                            });
+                            
+                            if (emergencyCleanup.cleaned) {
+                                const emergencyDataToStore = JSON.stringify(emergencyCleanup.posts);
+                                localStorage.setItem('socialMediaCalendar', emergencyDataToStore);
+                                setScheduledPosts(emergencyCleanup.posts);
+                                
+                                const report = emergencyCleanup.cleanupReport;
+                                showTemporaryMessage(
+                                    `🆘 紧急清理成功: 删除 ${report.deletedDates.length} 天数据，优化 ${report.compressedFiles} 个文件`, 
+                                    'success'
+                                );
+                                return;
+                            }
+                        } catch (retryError) {
+                            console.error('紧急清理也失败:', retryError);
+                        }
+                        
+                        // 如果清理仍然失败，提供手动选项
+                        showTemporaryMessage(
+                            '⚠️ 浏览器存储空间严重不足！请考虑：1) 清理浏览器数据 2) 删除旧内容 3) 升级到云端存储', 
+                            'error'
+                        );
+                        
                     } else if (error.message.includes('localStorage')) {
-                        showTemporaryMessage('❌ 浏览器存储被禁用，请检查隐私设置', 'error');
+                        showTemporaryMessage('❌ 浏览器存储被禁用，请检查隐私设置或尝试无痕模式', 'error');
                     } else {
-                        showTemporaryMessage('❌ 数据保存失败，请刷新页面重试', 'error');
+                        showTemporaryMessage('❌ 数据保存失败: ' + error.message, 'error');
                     }
+                    
+                    storageManager.storageStats.syncStatus = 'error';
                 }
             }, [scheduledPosts, user]);
 
@@ -2385,9 +2584,11 @@
                 );
             };
 
-            // 📊 存储状态组件
+            // 📊 智能存储管理组件
             const StorageStatusDisplay = () => {
                 const [storageStats, setStorageStats] = React.useState(storageManager.storageStats);
+                const [showManagement, setShowManagement] = React.useState(false);
+                const [isCleaningUp, setIsCleaningUp] = React.useState(false);
                 
                 React.useEffect(() => {
                     const interval = setInterval(() => {
@@ -2429,34 +2630,132 @@
                     if (usage > 0.6) return 'text-yellow-500';
                     return 'text-green-500';
                 };
+                
+                const getStorageUsagePercent = () => {
+                    const usage = storageStats.localSize / (10 * 1024 * 1024);
+                    return Math.min(Math.round(usage * 100), 100);
+                };
+                
+                // 手动清理存储
+                const handleManualCleanup = async (aggressive = false) => {
+                    setIsCleaningUp(true);
+                    try {
+                        const cleanupOptions = aggressive ? 
+                            { maxSizeMB: 2, maxAgeDays: 7, aggressive: true } :
+                            { maxSizeMB: 5, maxAgeDays: 30, aggressive: false };
+                            
+                        const cleanupResult = storageManager.cleanupStorage({...scheduledPosts}, cleanupOptions);
+                        
+                        if (cleanupResult.cleaned) {
+                            setScheduledPosts(cleanupResult.posts);
+                            localStorage.setItem('socialMediaCalendar', JSON.stringify(cleanupResult.posts));
+                            
+                            const report = cleanupResult.cleanupReport;
+                            const freedMB = (report.freedSpace / (1024 * 1024)).toFixed(1);
+                            showTemporaryMessage(
+                                `🧹 手动清理完成: 释放 ${freedMB}MB，处理 ${report.compressedFiles + report.deletedFiles} 个文件`,
+                                'success'
+                            );
+                        } else {
+                            showTemporaryMessage('ℹ️ 当前数据已经比较精简，无需清理', 'info');
+                        }
+                    } catch (error) {
+                        console.error('手动清理失败:', error);
+                        showTemporaryMessage('❌ 清理失败: ' + error.message, 'error');
+                    } finally {
+                        setIsCleaningUp(false);
+                        setShowManagement(false);
+                    }
+                };
+                
+                // 清空所有数据
+                const handleClearAllData = () => {
+                    if (confirm('⚠️ 确定要清空所有本地数据吗？此操作不可撤销！')) {
+                        const success = storageManager.clearAllData();
+                        if (success) {
+                            setScheduledPosts({});
+                            showTemporaryMessage('🗑️ 所有本地数据已清空', 'success');
+                            setShowManagement(false);
+                        } else {
+                            showTemporaryMessage('❌ 清空数据失败', 'error');
+                        }
+                    }
+                };
 
                 return (
-                    <div className="fixed bottom-4 left-4 z-40 bg-white rounded-lg shadow-lg p-3 border text-xs max-w-xs">
-                        <div className="flex items-center gap-2 mb-2">
-                            <span className="text-lg">{getSyncStatusIcon()}</span>
-                            <span className="font-medium">{getSyncStatusText()}</span>
-                        </div>
-                        <div className="space-y-1 text-gray-600">
-                            <div>📁 {storageStats.totalFiles} 个文件</div>
-                            <div className={`💾 本地: ${formatSize(storageStats.localSize)} ${getStorageUsageColor()}`}>
-                                💾 本地: <span className={getStorageUsageColor()}>{formatSize(storageStats.localSize)}</span>
+                    <div className="fixed bottom-4 left-4 z-40 bg-white rounded-lg shadow-lg border text-xs max-w-xs">
+                        <div className="p-3">
+                            <div className="flex items-center gap-2 mb-2">
+                                <span className="text-lg">{getSyncStatusIcon()}</span>
+                                <span className="font-medium">{getSyncStatusText()}</span>
+                                
+                                {/* 管理按钮 */}
+                                <button
+                                    onClick={() => setShowManagement(!showManagement)}
+                                    className="ml-auto text-gray-400 hover:text-gray-600 transition-colors"
+                                    title="存储管理"
+                                >
+                                    ⚙️
+                                </button>
                             </div>
-                            {storageStats.cloudSize > 0 && (
-                                <div>☁️ 云端: {formatSize(storageStats.cloudSize)}</div>
-                            )}
                             
-                            {/* 存储空间警告 */}
-                            {storageStats.localSize > 8 * 1024 * 1024 && (
-                                <div className="text-red-500 text-xs mt-1">
-                                    ⚠️ 存储空间不足
+                            <div className="space-y-1 text-gray-600">
+                                <div>📁 {storageStats.totalFiles} 个文件</div>
+                                <div className="flex items-center gap-2">
+                                    💾 本地: <span className={getStorageUsageColor()}>{formatSize(storageStats.localSize)}</span>
+                                    <span className="text-xs text-gray-400">({getStorageUsagePercent()}%)</span>
+                                </div>
+                                {storageStats.cloudSize > 0 && (
+                                    <div>☁️ 云端: {formatSize(storageStats.cloudSize)}</div>
+                                )}
+                                
+                                {/* 存储空间警告 */}
+                                {storageStats.localSize > 8 * 1024 * 1024 && (
+                                    <div className="text-red-500 text-xs mt-1 font-medium">
+                                        ⚠️ 存储空间严重不足
+                                    </div>
+                                )}
+                            </div>
+                            
+                            {/* 错误状态下显示更多信息 */}
+                            {storageStats.syncStatus === 'error' && (
+                                <div className="mt-2 pt-2 border-t text-xs text-red-500">
+                                    💡 检查网络连接或手动清理存储
                                 </div>
                             )}
                         </div>
                         
-                        {/* 错误状态下显示更多信息 */}
-                        {storageStats.syncStatus === 'error' && (
-                            <div className="mt-2 pt-2 border-t text-xs text-red-500">
-                                💡 检查网络连接或刷新页面重试
+                        {/* 存储管理面板 */}
+                        {showManagement && (
+                            <div className="border-t p-3 bg-gray-50">
+                                <div className="text-xs font-medium text-gray-700 mb-2">存储管理</div>
+                                <div className="space-y-2">
+                                    <button
+                                        onClick={() => handleManualCleanup(false)}
+                                        disabled={isCleaningUp}
+                                        className="w-full px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-xs disabled:opacity-50"
+                                    >
+                                        {isCleaningUp ? '🔄 清理中...' : '🧹 智能清理'}
+                                    </button>
+                                    <button
+                                        onClick={() => handleManualCleanup(true)}
+                                        disabled={isCleaningUp}
+                                        className="w-full px-2 py-1 bg-orange-100 hover:bg-orange-200 text-orange-700 rounded text-xs disabled:opacity-50"
+                                    >
+                                        {isCleaningUp ? '🔄 清理中...' : '🔥 深度清理'}
+                                    </button>
+                                    <button
+                                        onClick={handleClearAllData}
+                                        disabled={isCleaningUp}
+                                        className="w-full px-2 py-1 bg-red-100 hover:bg-red-200 text-red-700 rounded text-xs disabled:opacity-50"
+                                    >
+                                        🗑️ 清空所有数据
+                                    </button>
+                                </div>
+                                <div className="text-xs text-gray-500 mt-2">
+                                    <div>• 智能清理：保留30天数据</div>
+                                    <div>• 深度清理：仅保留7天数据</div>
+                                </div>
                             </div>
                         )}
                     </div>
