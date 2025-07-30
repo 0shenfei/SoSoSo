@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>测试页面</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="min-h-screen bg-blue-100 p-4">
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const App = () => {
+            return (
+                <div className="max-w-4xl mx-auto bg-white p-8 rounded-lg shadow-lg">
+                    <h1 className="text-3xl font-bold text-center text-gray-800 mb-6">
+                        测试页面 - React 正常工作！
+                    </h1>
+                    <p className="text-center text-gray-600">
+                        如果您看到这个页面，说明React和Babel都在正常工作。
+                    </p>
+                    <div className="mt-4 text-center">
+                        <button className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+                            测试按钮
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+    </script>
+</body>
+</html>
