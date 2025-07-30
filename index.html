@@ -121,6 +121,25 @@
                 return () => document.removeEventListener('keydown', handleKeyDown);
             }, [lightboxMedia]);
 
+            // 轮播逻辑
+            React.useEffect(() => {
+                const intervals = {};
+                Object.keys(scheduledPosts).forEach(dayKey => {
+                    const posts = scheduledPosts[dayKey];
+                    if (posts.length > 0 && posts[0].files && posts[0].files.length > 1) {
+                        intervals[dayKey] = setInterval(() => {
+                            setCarouselIndices(prev => ({
+                                ...prev,
+                                [dayKey]: ((prev[dayKey] || 0) + 1) % posts[0].files.length
+                            }));
+                        }, 3000); // 每3秒切换
+                    }
+                });
+                return () => { 
+                    Object.values(intervals).forEach(interval => clearInterval(interval)); 
+                };
+            }, [scheduledPosts]);
+
             const showTemporaryMessage = (text, type = 'success') => {
                 setMessage({ text, type });
                 setTimeout(() => setMessage({ text: '', type: '' }), 3000);
@@ -174,6 +193,77 @@
 
             const closeLightbox = () => {
                 setLightboxMedia(null);
+            };
+
+            // 快速发布功能
+            const quickPublish = (platform) => {
+                const today = getToday().toISOString().split('T')[0];
+                const todaysPosts = scheduledPosts[today] || [];
+                
+                if (todaysPosts.length === 0) {
+                    showTemporaryMessage('今日没有待发布的内容', 'error');
+                    return;
+                }
+
+                const post = todaysPosts[0];
+                const caption = post.caption || '';
+                
+                // 平台发布页面URL
+                const publishUrls = {
+                    'IG': 'https://www.instagram.com/',
+                    'FB': 'https://www.facebook.com/',
+                    '小红书': 'https://www.xiaohongshu.com/explore',
+                    '抖音': 'https://www.douyin.com/',
+                    '微博': 'https://weibo.com/u/page/publish',
+                    '微信': 'https://mp.weixin.qq.com/'
+                };
+
+                // 复制文案到剪贴板
+                if (caption) {
+                    navigator.clipboard.writeText(caption).then(() => {
+                        showTemporaryMessage(`文案已复制，正在跳转到${platform}`, 'success');
+                        setTimeout(() => {
+                            window.open(publishUrls[platform], '_blank');
+                        }, 1000);
+                    }).catch(() => {
+                        showTemporaryMessage('复制失败，但仍会跳转到发布页面', 'error');
+                        window.open(publishUrls[platform], '_blank');
+                    });
+                } else {
+                    window.open(publishUrls[platform], '_blank');
+                }
+            };
+
+            // 导出今日内容
+            const exportTodayContent = () => {
+                const today = getToday().toISOString().split('T')[0];
+                const todaysPosts = scheduledPosts[today] || [];
+                
+                if (todaysPosts.length === 0) {
+                    showTemporaryMessage('今日没有待发布的内容', 'error');
+                    return;
+                }
+
+                let content = `📅 ${today} 发布内容\\n\\n`;
+                
+                todaysPosts.forEach((post, index) => {
+                    content += `【第${index + 1}条】\\n`;
+                    content += `平台：${post.platforms.join('、')}\\n`;
+                    if (post.caption) {
+                        content += `文案：${post.caption}\\n`;
+                    }
+                    if (post.files && post.files.length > 0) {
+                        content += `媒体：${post.files.length}个文件\\n`;
+                    }
+                    content += '\\n';
+                });
+
+                // 复制到剪贴板
+                navigator.clipboard.writeText(content).then(() => {
+                    showTemporaryMessage('今日内容已复制到剪贴板', 'success');
+                }).catch(() => {
+                    showTemporaryMessage('复制失败，请手动复制', 'error');
+                });
             };
 
             const handleFileChange = (event) => {
@@ -377,6 +467,22 @@
                                                 <XCircle size={12} />
                                             </button>
                                             
+                                            {/* 多个文件时显示轮播指示器 */}
+                                            {postsForDay[0].files.length > 1 && (
+                                                <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 z-10 flex space-x-1 bg-black bg-opacity-30 px-2 py-1 rounded-full">
+                                                    {postsForDay[0].files.map((_, index) => (
+                                                        <div
+                                                            key={index}
+                                                            className={`w-1.5 h-1.5 rounded-full ${
+                                                                index === (carouselIndices[dayKey] || 0) 
+                                                                    ? 'bg-white' 
+                                                                    : 'bg-white bg-opacity-50'
+                                                            }`}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            )}
+                                            
                                             {(() => {
                                                 const currentFileIndex = carouselIndices[dayKey] || 0;
                                                 const currentFile = postsForDay[0].files[currentFileIndex];
@@ -390,7 +496,9 @@
                                                             onClick={() => openLightbox({
                                                                 ...currentFile,
                                                                 dataUrl: currentFile.originalDataUrl || currentFile.dataUrl,
-                                                                caption: postsForDay[0].caption
+                                                                caption: postsForDay[0].caption,
+                                                                allFiles: postsForDay[0].files,
+                                                                currentIndex: currentFileIndex
                                                             })}
                                                         />
                                                     );
@@ -401,7 +509,9 @@
                                                             onClick={() => openLightbox({
                                                                 ...currentFile,
                                                                 dataUrl: currentFile.originalDataUrl,
-                                                                caption: postsForDay[0].caption
+                                                                caption: postsForDay[0].caption,
+                                                                allFiles: postsForDay[0].files,
+                                                                currentIndex: currentFileIndex
                                                             })}
                                                         >
                                                             {currentFile.thumbnail ? (
@@ -474,8 +584,44 @@
                         <div className="flex justify-between items-start p-4 md:p-8 pb-4">
                             <div></div>
                             <div className="text-sm text-gray-600 font-medium text-right">
-                                <div className="text-xs text-gray-500 mb-2">
-                                    存储: {Object.keys(scheduledPosts).length} 个日期
+                                <div className="flex flex-col items-end gap-2 mb-4">
+                                    {/* 今日内容快速发布按钮 */}
+                                    <div className="flex gap-2 mb-2">
+                                        <button
+                                            onClick={exportTodayContent}
+                                            className="text-xs px-2 py-1 bg-purple-50 text-purple-600 rounded hover:bg-purple-100 transition-colors"
+                                            title="复制今日发布内容"
+                                        >
+                                            📋 今日内容
+                                        </button>
+                                    </div>
+                                    
+                                    {/* 快速发布按钮 */}
+                                    {(() => {
+                                        const today = getToday().toISOString().split('T')[0];
+                                        const todaysPosts = scheduledPosts[today] || [];
+                                        if (todaysPosts.length > 0 && todaysPosts[0].platforms) {
+                                            return (
+                                                <div className="flex gap-1 mb-2 flex-wrap justify-end">
+                                                    {todaysPosts[0].platforms.map(platform => (
+                                                        <button
+                                                            key={platform}
+                                                            onClick={() => quickPublish(platform)}
+                                                            className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors"
+                                                            title={`快速发布到${platform}`}
+                                                        >
+                                                            🚀 {platform}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            );
+                                        }
+                                        return null;
+                                    })()}
+                                    
+                                    <div className="text-xs text-gray-500">
+                                        存储: {Object.keys(scheduledPosts).length} 个日期
+                                    </div>
                                 </div>
                                 {currentTime.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}
                                 <br />
@@ -624,53 +770,103 @@
                         )}
 
                         {/* Lightbox模态框 */}
-                        {lightboxMedia && (
-                            <div 
-                                className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4"
-                                onClick={closeLightbox}
-                            >
-                                <div className="flex max-w-7xl max-h-full w-full gap-6" onClick={(e) => e.stopPropagation()}>
-                                    <button
-                                        onClick={closeLightbox}
-                                        className="absolute top-6 right-6 z-60 bg-white bg-opacity-20 text-white rounded-full p-2 hover:bg-opacity-30 transition-colors"
-                                        title="关闭"
-                                    >
-                                        <XCircle size={24} />
-                                    </button>
-                                    
-                                    {/* 媒体内容区域 */}
-                                    <div className="flex-1 flex items-center justify-center">
-                                        {lightboxMedia.type === 'image' ? (
-                                            <img
-                                                src={lightboxMedia.dataUrl}
-                                                alt={lightboxMedia.name}
-                                                className="max-w-full max-h-full object-contain rounded-lg"
-                                            />
-                                        ) : lightboxMedia.type === 'video' ? (
-                                            <video
-                                                src={lightboxMedia.dataUrl}
-                                                controls
-                                                autoPlay
-                                                className="max-w-full max-h-full object-contain rounded-lg"
-                                            >
-                                                您的浏览器不支持视频标签。
-                                            </video>
-                                        ) : (
-                                            <div className="flex items-center justify-center text-gray-400 text-xl">
-                                                📝 文字内容
-                                            </div>
-                                        )}
-                                    </div>
-                                    
-                                    {/* 文字内容区域 */}
-                                    {lightboxMedia.caption && (
+                        {lightboxMedia && (() => {
+                            const [currentLightboxIndex, setCurrentLightboxIndex] = React.useState(lightboxMedia.currentIndex || 0);
+                            const allFiles = lightboxMedia.allFiles || [lightboxMedia];
+                            const currentMedia = allFiles[currentLightboxIndex];
+
+                            const nextMedia = () => {
+                                setCurrentLightboxIndex((prev) => (prev + 1) % allFiles.length);
+                            };
+
+                            const prevMedia = () => {
+                                setCurrentLightboxIndex((prev) => (prev - 1 + allFiles.length) % allFiles.length);
+                            };
+
+                            return (
+                                <div 
+                                    className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4"
+                                    onClick={closeLightbox}
+                                >
+                                    <div className="flex max-w-7xl max-h-full w-full gap-6" onClick={(e) => e.stopPropagation()}>
+                                        <button
+                                            onClick={closeLightbox}
+                                            className="absolute top-6 right-6 z-60 bg-white bg-opacity-20 text-white rounded-full p-2 hover:bg-opacity-30 transition-colors"
+                                            title="关闭"
+                                        >
+                                            <XCircle size={24} />
+                                        </button>
+                                        
+                                        {/* 媒体内容区域 */}
+                                        <div className="flex-1 flex items-center justify-center relative">
+                                            {/* 左右切换按钮 */}
+                                            {allFiles.length > 1 && (
+                                                <>
+                                                    <button
+                                                        onClick={prevMedia}
+                                                        className="absolute left-4 z-50 bg-white bg-opacity-20 text-white rounded-full p-3 hover:bg-opacity-30 transition-colors"
+                                                        title="上一个"
+                                                    >
+                                                        <ChevronLeft />
+                                                    </button>
+                                                    <button
+                                                        onClick={nextMedia}
+                                                        className="absolute right-4 z-50 bg-white bg-opacity-20 text-white rounded-full p-3 hover:bg-opacity-30 transition-colors"
+                                                        title="下一个"
+                                                    >
+                                                        <ChevronRight />
+                                                    </button>
+                                                </>
+                                            )}
+
+                                            {/* 媒体显示区域 */}
+                                            {currentMedia.type === 'image' ? (
+                                                <img
+                                                    src={currentMedia.originalDataUrl || currentMedia.dataUrl}
+                                                    alt={currentMedia.name}
+                                                    className="max-w-full max-h-full object-contain rounded-lg"
+                                                />
+                                            ) : currentMedia.type === 'video' ? (
+                                                <video
+                                                    src={currentMedia.originalDataUrl || currentMedia.dataUrl}
+                                                    controls
+                                                    autoPlay
+                                                    className="max-w-full max-h-full object-contain rounded-lg"
+                                                >
+                                                    您的浏览器不支持视频标签。
+                                                </video>
+                                            ) : (
+                                                <div className="flex items-center justify-center text-gray-400 text-xl">
+                                                    📝 文字内容
+                                                </div>
+                                            )}
+
+                                            {/* 轮播指示器 */}
+                                            {allFiles.length > 1 && (
+                                                <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 flex space-x-2">
+                                                    {allFiles.map((_, index) => (
+                                                        <button
+                                                            key={index}
+                                                            onClick={() => setCurrentLightboxIndex(index)}
+                                                            className={`w-3 h-3 rounded-full transition-colors ${
+                                                                index === currentLightboxIndex 
+                                                                    ? 'bg-white' 
+                                                                    : 'bg-white bg-opacity-50 hover:bg-opacity-75'
+                                                            }`}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                        
+                                        {/* 右侧文字内容区域 */}
                                         <div className="w-80 bg-white rounded-lg p-6 flex flex-col max-h-full">
                                             <div className="flex items-center justify-between mb-4">
                                                 <h3 className="text-lg font-semibold text-gray-800">文案内容</h3>
                                                 <button
                                                     onClick={async () => {
                                                         try {
-                                                            await navigator.clipboard.writeText(lightboxMedia.caption);
+                                                            await navigator.clipboard.writeText(lightboxMedia.caption || '');
                                                             showTemporaryMessage('文案已复制到剪贴板', 'success');
                                                         } catch (err) {
                                                             showTemporaryMessage('复制失败，请手动复制', 'error');
@@ -682,16 +878,32 @@
                                                     📋 复制
                                                 </button>
                                             </div>
-                                            <div className="flex-1 overflow-y-auto border rounded-md p-4 bg-gray-50">
+                                            
+                                            {/* 文案内容 */}
+                                            <div className="flex-1 overflow-y-auto border rounded-md p-4 bg-gray-50 mb-4">
                                                 <p className="text-gray-700 leading-relaxed whitespace-pre-wrap text-base font-normal">
-                                                    {lightboxMedia.caption}
+                                                    {lightboxMedia.caption || '暂无文案内容'}
                                                 </p>
                                             </div>
+
+                                            {/* 文件信息 */}
+                                            <div className="border-t pt-4">
+                                                <h4 className="text-sm font-medium text-gray-800 mb-2">
+                                                    文件信息 ({currentLightboxIndex + 1}/{allFiles.length})
+                                                </h4>
+                                                <div className="text-xs text-gray-600 space-y-1">
+                                                    <div>文件名: {currentMedia.name || '未知'}</div>
+                                                    <div>类型: {currentMedia.type === 'image' ? '图片' : currentMedia.type === 'video' ? '视频' : '文本'}</div>
+                                                    {currentMedia.size && (
+                                                        <div>大小: {(currentMedia.size / 1024 / 1024).toFixed(2)} MB</div>
+                                                    )}
+                                                </div>
+                                            </div>
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
-                            </div>
-                        )}
+                            );
+                        })()}
                         </div>
                     </div>
                 </div>
