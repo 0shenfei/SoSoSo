@@ -61,6 +61,7 @@
             const [message, setMessage] = React.useState({ text: '', type: '' });
             const [currentView, setCurrentView] = React.useState('calendar');
             const [currentTime, setCurrentTime] = React.useState(new Date());
+            const [lightboxMedia, setLightboxMedia] = React.useState(null);
 
             const platforms = [
                 { name: 'IG', url: 'https://www.instagram.com/' },
@@ -86,6 +87,18 @@
                 }, 1000);
                 return () => clearInterval(timer);
             }, []);
+
+            // 键盘事件监听 - ESC键关闭Lightbox
+            React.useEffect(() => {
+                const handleKeyDown = (event) => {
+                    if (event.key === 'Escape' && lightboxMedia) {
+                        closeLightbox();
+                    }
+                };
+
+                document.addEventListener('keydown', handleKeyDown);
+                return () => document.removeEventListener('keydown', handleKeyDown);
+            }, [lightboxMedia]);
 
             const showTemporaryMessage = (text, type = 'success') => {
                 if (type === 'error') {
@@ -138,6 +151,14 @@
 
             const removeSelectedFile = (indexToRemove) => {
                 setSelectedFiles(prevFiles => prevFiles.filter((_, index) => index !== indexToRemove));
+            };
+
+            const openLightbox = (media) => {
+                setLightboxMedia(media);
+            };
+
+            const closeLightbox = () => {
+                setLightboxMedia(null);
             };
 
             const getMonthYear = () => {
@@ -202,22 +223,29 @@
                                         {/* 媒体文件展示 */}
                                         {post.files && post.files.length > 0 ? (
                                             <div className="grid grid-cols-2 gap-1 mb-2">
-                                                {post.files.map((file, fileIndex) => (
-                                                    <div key={fileIndex} className="relative">
+                                                                                                {post.files.map((file, fileIndex) => (
+                                                    <div key={fileIndex} className="relative cursor-pointer hover:opacity-80 transition-opacity">
                                                         {file.type === 'image' ? (
                                                             <img
                                                                 src={file.dataUrl}
                                                                 alt={`Media ${fileIndex + 1}`}
                                                                 className="w-full h-20 object-cover rounded-md"
+                                                                onClick={() => openLightbox(file)}
+                                                                title="点击查看大图"
                                                             />
                                                         ) : (
-                                                            <video
-                                                                src={file.dataUrl}
-                                                                controls
-                                                                className="w-full h-20 object-cover rounded-md"
-                                                            >
-                                                                您的浏览器不支持视频标签。
-                                                            </video>
+                                                            <div onClick={() => openLightbox(file)} title="点击全屏播放">
+                                                                <video
+                                                                    src={file.dataUrl}
+                                                                    className="w-full h-20 object-cover rounded-md"
+                                                                    muted
+                                                                >
+                                                                    您的浏览器不支持视频标签。
+                                                                </video>
+                                                                <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 rounded-md">
+                                                                    <span className="text-white text-lg">▶</span>
+                                                                </div>
+                                                            </div>
                                                         )}
                                                     </div>
                                                 ))}
@@ -489,15 +517,27 @@
                                                             <img
                                                                 src={URL.createObjectURL(file)}
                                                                 alt={`预览 ${index + 1}`}
-                                                                className="w-full h-20 object-cover rounded-md"
+                                                                className="w-full h-20 object-cover rounded-md cursor-pointer hover:opacity-80 transition-opacity"
+                                                                onClick={() => openLightbox({type: 'image', dataUrl: URL.createObjectURL(file), name: file.name})}
+                                                                title="点击查看大图"
                                                             />
                                                         ) : (
-                                                            <video
-                                                                src={URL.createObjectURL(file)}
-                                                                className="w-full h-20 object-cover rounded-md"
+                                                            <div 
+                                                                className="relative cursor-pointer hover:opacity-80 transition-opacity"
+                                                                onClick={() => openLightbox({type: 'video', dataUrl: URL.createObjectURL(file), name: file.name})}
+                                                                title="点击全屏播放"
                                                             >
-                                                                您的浏览器不支持视频标签。
-                                                            </video>
+                                                                <video
+                                                                    src={URL.createObjectURL(file)}
+                                                                    className="w-full h-20 object-cover rounded-md"
+                                                                    muted
+                                                                >
+                                                                    您的浏览器不支持视频标签。
+                                                                </video>
+                                                                <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 rounded-md">
+                                                                    <span className="text-white text-lg">▶</span>
+                                                                </div>
+                                                            </div>
                                                         )}
                                                         <p className="text-xs text-gray-600 mt-1 truncate">{file.name}</p>
                                                     </div>
@@ -554,6 +594,51 @@
                                     >
                                         添加
                                     </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Lightbox Modal */}
+                    {lightboxMedia && (
+                        <div 
+                            className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50"
+                            onClick={closeLightbox}
+                        >
+                            <div className="relative max-w-full max-h-full p-4">
+                                <button
+                                    onClick={closeLightbox}
+                                    className="absolute top-4 right-4 z-60 bg-white bg-opacity-20 text-white rounded-full p-2 hover:bg-opacity-30 transition-colors"
+                                    title="关闭"
+                                >
+                                    <XCircle size={24} />
+                                </button>
+                                
+                                <div className="flex flex-col items-center">
+                                    {lightboxMedia.type === 'image' ? (
+                                        <img
+                                            src={lightboxMedia.dataUrl}
+                                            alt={lightboxMedia.name}
+                                            className="max-w-full max-h-[90vh] object-contain rounded-lg"
+                                            onClick={(e) => e.stopPropagation()}
+                                        />
+                                    ) : (
+                                        <video
+                                            src={lightboxMedia.dataUrl}
+                                            controls
+                                            autoPlay
+                                            className="max-w-full max-h-[90vh] object-contain rounded-lg"
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            您的浏览器不支持视频标签。
+                                        </video>
+                                    )}
+                                    
+                                    {lightboxMedia.name && (
+                                        <p className="text-white text-sm mt-4 text-center bg-black bg-opacity-50 px-4 py-2 rounded">
+                                            {lightboxMedia.name}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                         </div>
