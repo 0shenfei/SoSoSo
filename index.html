@@ -5,26 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>社交媒体发布日历</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700&family=Work+Sans:wght@100;200;300;400;500;600;700&family=Source+Sans+Pro:wght@200;300;400;600;700&family=Poppins:wght@100;200;300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@100;200;300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { 
             font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, sans-serif; 
             background: #f8f9fa;
-        }
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #888;
-            border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #555;
         }
         .calendar-cell {
             border: 1px solid #e5e7eb;
@@ -41,9 +26,6 @@
         .past-cell {
             background-color: #f9fafb;
             color: #9ca3af;
-        }
-        .carousel-indicator {
-            transition: all 0.3s ease;
         }
         .aspect-9-16 {
             aspect-ratio: 9 / 16;
@@ -71,23 +53,18 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
-<body class="min-h-screen bg-gray-50 p-6 font-sans antialiased">
+<body>
     <div id="root"></div>
 
     <script type="text/babel">
-        // Simple icons using Unicode symbols
+        // 图标组件
         const ChevronLeft = () => <span>‹</span>;
         const ChevronRight = () => <span>›</span>;
-        const PlusCircle = () => <span>+</span>;
         const XCircle = () => <span>×</span>;
-        const UploadCloud = () => <span>📁</span>;
-        const CalendarPlus = () => <span>📅</span>;
-        const ExternalLink = () => <span>🔗</span>;
 
         const App = () => {
             const [currentDate, setCurrentDate] = React.useState(new Date());
             const [scheduledPosts, setScheduledPosts] = React.useState(() => {
-                // 从localStorage加载已保存的数据
                 try {
                     const saved = localStorage.getItem('socialMediaCalendar');
                     return saved ? JSON.parse(saved) : {};
@@ -102,7 +79,6 @@
             const [selectedPlatforms, setSelectedPlatforms] = React.useState([]);
             const [captionInput, setCaptionInput] = React.useState('');
             const [message, setMessage] = React.useState({ text: '', type: '' });
-            const [currentView, setCurrentView] = React.useState('calendar');
             const [currentTime, setCurrentTime] = React.useState(new Date());
             const [lightboxMedia, setLightboxMedia] = React.useState(null);
             const [carouselIndices, setCarouselIndices] = React.useState({});
@@ -112,30 +88,21 @@
                 { name: 'IG', url: 'https://www.instagram.com/' },
                 { name: 'FB', url: 'https://www.facebook.com/' },
                 { name: '小红书', url: 'https://www.xiaohongshu.com/' },
-                { name: '微信', url: 'https://weixin.qq.com/' },
-                { name: 'TIKTOK', url: 'https://www.tiktok.com/' },
-                { name: '抖音', url: 'https://www.douyin.com/' }
+                { name: '抖音', url: 'https://www.douyin.com/' },
+                { name: '微博', url: 'https://weibo.com/' },
+                { name: '微信', url: 'https://mp.weixin.qq.com/' }
             ];
 
-            // 自动保存数据到localStorage
+            // 保存数据到localStorage
             React.useEffect(() => {
                 try {
-                    // 检查数据大小
-                    const dataStr = JSON.stringify(scheduledPosts);
-                    const dataSize = new Blob([dataStr]).size / 1024 / 1024; // MB
-                    
-                    if (dataSize > 5) {
-                        console.warn('数据过大，可能无法完全保存到localStorage');
-                        showTemporaryMessage('数据量较大，建议定期导出备份', 'error');
-                    }
-                    
-                    localStorage.setItem('socialMediaCalendar', dataStr);
+                    localStorage.setItem('socialMediaCalendar', JSON.stringify(scheduledPosts));
                 } catch (error) {
                     console.error('保存数据失败:', error);
-                    showTemporaryMessage('存储空间不足，请导出数据或清理部分内容', 'error');
                 }
             }, [scheduledPosts]);
 
+            // 时间更新
             React.useEffect(() => {
                 const timer = setInterval(() => {
                     setCurrentTime(new Date());
@@ -143,64 +110,54 @@
                 return () => clearInterval(timer);
             }, []);
 
-            // 键盘事件监听 - ESC键关闭Lightbox
+            // 键盘事件
             React.useEffect(() => {
                 const handleKeyDown = (event) => {
                     if (event.key === 'Escape' && lightboxMedia) {
                         closeLightbox();
                     }
                 };
-
                 document.addEventListener('keydown', handleKeyDown);
                 return () => document.removeEventListener('keydown', handleKeyDown);
             }, [lightboxMedia]);
 
-            // 初始化通知权限和定时检查
-            React.useEffect(() => {
-                const savedNotificationState = localStorage.getItem('notificationsEnabled');
-                if (savedNotificationState === 'true' && 'Notification' in window && Notification.permission === 'granted') {
-                    setNotificationsEnabled(true);
-                }
-
-                // 每分钟检查一次是否需要发送提醒
-                const checkInterval = setInterval(() => {
-                    const now = new Date();
-                    // 在9:00, 12:00, 15:00, 18:00 的整点提醒
-                    if ([9, 12, 15, 18].includes(now.getHours()) && now.getMinutes() === 0 && now.getSeconds() < 5) {
-                        checkTodaysPosts();
-                    }
-                }, 1000);
-
-                return () => clearInterval(checkInterval);
-            }, [scheduledPosts, notificationsEnabled]);
-
             const showTemporaryMessage = (text, type = 'success') => {
-                if (type === 'error') {
-                    setMessage({ text, type });
-                    setTimeout(() => setMessage({ text: '', type: '' }), 3000);
-                }
+                setMessage({ text, type });
+                setTimeout(() => setMessage({ text: '', type: '' }), 3000);
+            };
+
+            const getToday = () => {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                return today;
+            };
+
+            const getDaysInMonth = (date) => {
+                return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+            };
+
+            const getFirstDayOfMonth = (date) => {
+                return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
+            };
+
+            const getMonthYear = () => {
+                return currentDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' });
             };
 
             const prevMonth = () => {
-                setCurrentDate(prevDate => {
-                    const newDate = new Date(prevDate.getFullYear(), prevDate.getMonth() - 1, 1);
-                    return newDate;
-                });
+                setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
             };
 
             const nextMonth = () => {
-                setCurrentDate(prevDate => {
-                    const newDate = new Date(prevDate.getFullYear(), prevDate.getMonth() + 1, 1);
-                    return newDate;
-                });
+                setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
             };
 
             const openModal = (day) => {
                 setSelectedDay(day);
+                setShowModal(true);
                 setSelectedFiles([]);
                 setSelectedPlatforms([]);
                 setCaptionInput('');
-                setShowModal(true);
             };
 
             const closeModal = () => {
@@ -209,6 +166,14 @@
                 setSelectedFiles([]);
                 setSelectedPlatforms([]);
                 setCaptionInput('');
+            };
+
+            const openLightbox = (media) => {
+                setLightboxMedia(media);
+            };
+
+            const closeLightbox = () => {
+                setLightboxMedia(null);
             };
 
             const handleFileChange = (event) => {
@@ -227,7 +192,31 @@
                 setSelectedFiles(prevFiles => prevFiles.filter((_, index) => index !== indexToRemove));
             };
 
-            // 压缩图片函数
+            const handlePlatformChange = (platformName) => {
+                setSelectedPlatforms(prevPlatforms => {
+                    if (prevPlatforms.includes(platformName)) {
+                        return prevPlatforms.filter(p => p !== platformName);
+                    } else {
+                        return [...prevPlatforms, platformName];
+                    }
+                });
+            };
+
+            const removeMedia = (day, indexToRemove) => {
+                const dayKey = day.toISOString().split('T')[0];
+                setScheduledPosts(prevPosts => {
+                    const updatedPosts = { ...prevPosts };
+                    if (updatedPosts[dayKey]) {
+                        updatedPosts[dayKey] = updatedPosts[dayKey].filter((_, index) => index !== indexToRemove);
+                        if (updatedPosts[dayKey].length === 0) {
+                            delete updatedPosts[dayKey];
+                        }
+                    }
+                    return updatedPosts;
+                });
+                showTemporaryMessage('内容已删除。', 'error');
+            };
+
             const compressImage = (file, maxWidth = 1920, quality = 0.8) => {
                 return new Promise((resolve) => {
                     const canvas = document.createElement('canvas');
@@ -247,128 +236,99 @@
                 });
             };
 
-            // 创建视频缩略图
             const createVideoThumbnail = (file) => {
-                return new Promise((resolve) => {
+                return new Promise((resolve, reject) => {
                     const video = document.createElement('video');
                     const canvas = document.createElement('canvas');
                     const ctx = canvas.getContext('2d');
                     
                     video.onloadedmetadata = () => {
-                        canvas.width = Math.min(video.videoWidth, 800);
-                        canvas.height = Math.min(video.videoHeight, 600);
-                        
-                        video.currentTime = 1; // 获取第1秒的帧
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        video.currentTime = 1;
                     };
                     
                     video.onseeked = () => {
-                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        resolve(canvas.toDataURL('image/jpeg', 0.7));
+                        ctx.drawImage(video, 0, 0);
+                        resolve(canvas.toDataURL('image/jpeg', 0.8));
                     };
                     
+                    video.onerror = () => reject(new Error('视频加载失败'));
                     video.src = URL.createObjectURL(file);
                 });
             };
 
-            const openLightbox = (media) => {
-                setLightboxMedia(media);
-            };
+            const addMediaToDay = async () => {
+                if (selectedFiles.length === 0 && !captionInput.trim()) {
+                    showTemporaryMessage('请上传图片/视频或输入文案。', 'error');
+                    return;
+                }
+                if (selectedPlatforms.length === 0) {
+                    showTemporaryMessage('请至少选择一个发布平台。', 'error');
+                    return;
+                }
 
-            const closeLightbox = () => {
-                setLightboxMedia(null);
-            };
+                const dayKey = selectedDay.toISOString().split('T')[0];
+                const newPost = {
+                    platforms: selectedPlatforms,
+                    caption: captionInput.trim(),
+                    files: []
+                };
 
-            // 请求通知权限
-            const requestNotificationPermission = async () => {
-                if ('Notification' in window) {
-                    const permission = await Notification.requestPermission();
-                    if (permission === 'granted') {
-                        setNotificationsEnabled(true);
-                        localStorage.setItem('notificationsEnabled', 'true');
-                        showTemporaryMessage('通知权限已开启，我们会在发布时间提醒您', 'success');
-                } else {
-                        showTemporaryMessage('需要开启通知权限才能使用提醒功能', 'error');
+                if (selectedFiles.length > 0) {
+                    try {
+                        const filePromises = selectedFiles.map(async (file) => {
+                            if (file.type.startsWith('image/')) {
+                                const compressedDataUrl = await compressImage(file);
+                                return { 
+                                    type: 'image', 
+                                    dataUrl: compressedDataUrl, 
+                                    originalDataUrl: URL.createObjectURL(file), 
+                                    name: file.name, 
+                                    size: file.size 
+                                };
+                            } else if (file.type.startsWith('video/')) {
+                                try {
+                                    const thumbnail = await createVideoThumbnail(file);
+                                    return { 
+                                        type: 'video', 
+                                        thumbnail: thumbnail, 
+                                        originalDataUrl: URL.createObjectURL(file), 
+                                        name: file.name, 
+                                        size: file.size, 
+                                        isLargeFile: true 
+                                    };
+                                } catch (error) {
+                                    return { 
+                                        type: 'video', 
+                                        originalDataUrl: URL.createObjectURL(file), 
+                                        name: file.name, 
+                                        size: file.size, 
+                                        isLargeFile: true 
+                                    };
+                                }
+                            }
+                        });
+                        
+                        const fileData = await Promise.all(filePromises);
+                        newPost.files = fileData;
+                    } catch (error) {
+                        showTemporaryMessage('文件处理失败。', 'error');
+                        return;
                     }
-                } else {
-                    showTemporaryMessage('您的浏览器不支持通知功能', 'error');
                 }
-            };
 
-            // 发送通知提醒
-            const sendNotification = (title, body, data) => {
-                if (notificationsEnabled && 'Notification' in window && Notification.permission === 'granted') {
-                    const notification = new Notification(title, {
-                        body: body,
-                        icon: '/favicon.ico',
-                        badge: '/favicon.ico',
-                        tag: 'social-media-reminder',
-                        data: data
-                    });
-                    
-                    notification.onclick = () => {
-                        window.focus();
-                        notification.close();
-                    };
-                }
-            };
-
-            // 检查今日待发布内容
-            const checkTodaysPosts = () => {
-                const today = getToday().toISOString().split('T')[0];
-                const todaysPosts = scheduledPosts[today] || [];
-                
-                if (todaysPosts.length > 0) {
-                    const platforms = todaysPosts[0].platforms || [];
-                    const caption = todaysPosts[0].caption || '';
-                    const hasFiles = todaysPosts[0].files && todaysPosts[0].files.length > 0;
-                    
-                    let contentType = hasFiles ? `${todaysPosts[0].files.length}个媒体文件` : '文字内容';
-                    
-                    sendNotification(
-                        '📅 今日发布提醒',
-                        `您有内容需要发布到：${platforms.join('、')}\\n内容：${contentType}`,
-                        { date: today, platforms, caption }
-                    );
-                }
-            };
-
-            // 轮播逻辑
-            React.useEffect(() => {
-                const intervals = {};
-                
-                Object.keys(scheduledPosts).forEach(dayKey => {
-                    const posts = scheduledPosts[dayKey];
-                    if (posts.length > 0 && posts[0].files && posts[0].files.length > 1) {
-                        intervals[dayKey] = setInterval(() => {
-                            setCarouselIndices(prev => ({
-                                ...prev,
-                                [dayKey]: ((prev[dayKey] || 0) + 1) % posts[0].files.length
-                            }));
-                        }, 3000); // 每3秒切换
+                setScheduledPosts(prevPosts => {
+                    const updatedPosts = { ...prevPosts };
+                    if (!updatedPosts[dayKey]) {
+                        updatedPosts[dayKey] = [];
                     }
+                    updatedPosts[dayKey].push(newPost);
+                    return updatedPosts;
                 });
 
-                return () => {
-                    Object.values(intervals).forEach(interval => clearInterval(interval));
-                };
-            }, [scheduledPosts]);
-
-            const getMonthYear = () => {
-                return currentDate.toLocaleString('zh-CN', { month: 'long', year: 'numeric' });
-            };
-
-            const getDaysInMonth = (date) => {
-                return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-            };
-
-            const getFirstDayOfMonth = (date) => {
-                return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
-            };
-
-            const getToday = () => {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                return today;
+                showTemporaryMessage('内容已添加到日历！', 'success');
+                closeModal();
             };
 
             const renderCalendarDays = () => {
@@ -406,90 +366,70 @@
                             <div className={`relative ${cellClass} aspect-9-16`}>
                                 <div className="absolute top-2 left-2 text-xs text-gray-400 z-10" style={{fontWeight: 300}}>{day}</div>
                                 
-                                {/* 主要内容区域 - 占满整个格子 */}
                                 {postsForDay.length > 0 ? (
                                     postsForDay[0].files && postsForDay[0].files.length > 0 ? (
-                                    <div className="relative group media-container">
-                                        {/* 删除按钮 */}
-                                        <button
-                                            onClick={() => removeMedia(currentDay, 0)}
-                                            className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity bg-white rounded-full p-1 shadow-md hover:bg-gray-50"
-                                            title="删除内容"
-                                        >
-                                            <XCircle size={12} className="text-gray-600" />
-                                        </button>
-                                        
-                                        {/* 多个文件时显示轮播指示器 */}
-                                        {postsForDay[0].files.length > 1 && (
-                                            <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 z-10 flex space-x-1 bg-black bg-opacity-30 px-2 py-1 rounded-full">
-                                                {postsForDay[0].files.map((_, index) => (
-                                                    <div
-                                                        key={index}
-                                                        className={`w-1.5 h-1.5 rounded-full carousel-indicator ${
-                                                            index === (carouselIndices[dayKey] || 0) 
-                                                                ? 'bg-white' 
-                                                                : 'bg-white bg-opacity-50'
-                                                        }`}
-                                                    />
-                                                ))}
-                                            </div>
-                                        )}
-                                        
-                                        {(() => {
-                                            const currentFileIndex = carouselIndices[dayKey] || 0;
-                                            const currentFile = postsForDay[0].files[currentFileIndex];
-                                            
-                                            if (currentFile.type === 'image') {
-                                                return (
-                                                    <img
-                                                        src={currentFile.dataUrl || currentFile.originalDataUrl}
-                                                        alt="内容图片"
-                                                        className="cursor-pointer"
-                                                        onClick={() => openLightbox({
-                                                            ...currentFile,
-                                                            dataUrl: currentFile.originalDataUrl || currentFile.dataUrl,
-                                                            caption: postsForDay[0].caption
-                                                        })}
-                                                    />
-                                                );
-                                            } else {
-                                                return (
-                                                    <div 
-                                                        className="w-full h-full cursor-pointer"
-                                                        onClick={() => openLightbox({
-                                                            ...currentFile,
-                                                            dataUrl: currentFile.originalDataUrl,
-                                                            caption: postsForDay[0].caption
-                                                        })}
-                                                    >
-                                                        {currentFile.thumbnail ? (
-                                                            <img
-                                                                src={currentFile.thumbnail}
-                                                                alt="视频缩略图"
-                                                            />
-                                                        ) : (
-                                                            <video
-                                                                src={currentFile.originalDataUrl}
-                                                                muted
-                                                            />
-                                                        )}
-                                        </div>
-                                                );
-                                            }
-                                        })()}
-                                    </div>
-                                    ) : (
-                                        // 纯文字显示
-                                        postsForDay[0].caption && (
-                                            <div className="relative group w-full h-full">
-                                                {/* 删除按钮 */}
+                                        <div className="relative group media-container">
                                             <button
-                                                    onClick={() => removeMedia(currentDay, 0)}
-                                                    className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity bg-white rounded-full p-1 shadow-md hover:bg-gray-50"
+                                                onClick={() => removeMedia(currentDay, 0)}
+                                                className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity bg-blue-500 text-white rounded-full p-1 shadow-md hover:bg-blue-600"
                                                 title="删除内容"
                                             >
-                                                    <XCircle size={12} className="text-gray-600" />
+                                                <XCircle size={12} />
                                             </button>
+                                            
+                                            {(() => {
+                                                const currentFileIndex = carouselIndices[dayKey] || 0;
+                                                const currentFile = postsForDay[0].files[currentFileIndex];
+                                                
+                                                if (currentFile.type === 'image') {
+                                                    return (
+                                                        <img
+                                                            src={currentFile.dataUrl || currentFile.originalDataUrl}
+                                                            alt="内容图片"
+                                                            className="cursor-pointer"
+                                                            onClick={() => openLightbox({
+                                                                ...currentFile,
+                                                                dataUrl: currentFile.originalDataUrl || currentFile.dataUrl,
+                                                                caption: postsForDay[0].caption
+                                                            })}
+                                                        />
+                                                    );
+                                                } else {
+                                                    return (
+                                                        <div 
+                                                            className="w-full h-full cursor-pointer"
+                                                            onClick={() => openLightbox({
+                                                                ...currentFile,
+                                                                dataUrl: currentFile.originalDataUrl,
+                                                                caption: postsForDay[0].caption
+                                                            })}
+                                                        >
+                                                            {currentFile.thumbnail ? (
+                                                                <img
+                                                                    src={currentFile.thumbnail}
+                                                                    alt="视频缩略图"
+                                                                    className="w-full h-full object-cover"
+                                                                />
+                                                            ) : (
+                                                                <div className="w-full h-full bg-gray-200 flex items-center justify-center">
+                                                                    <span className="text-4xl">🎥</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                }
+                                            })()}
+                                        </div>
+                                    ) : (
+                                        postsForDay[0].caption && (
+                                            <div className="relative group w-full h-full">
+                                                <button
+                                                    onClick={() => removeMedia(currentDay, 0)}
+                                                    className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity bg-blue-500 text-white rounded-full p-1 shadow-md hover:bg-blue-600"
+                                                    title="删除内容"
+                                                >
+                                                    <XCircle size={12} />
+                                                </button>
                                                 
                                                 <div 
                                                     className="w-full h-full p-3 cursor-pointer bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 hover:from-blue-100 hover:to-indigo-100 transition-colors flex items-center justify-center"
@@ -504,226 +444,26 @@
                                                             : postsForDay[0].caption
                                                         }
                                                     </p>
-                                        </div>
-                                    </div>
+                                                </div>
+                                            </div>
                                         )
                                     )
                                 ) : null}
                             </div>
                             
-                            {/* 底部添加按钮 - 居中显示 */}
                             <div className="flex justify-center py-2">
-                            <button
-                                onClick={() => openModal(currentDay)}
+                                <button
+                                    onClick={() => openModal(currentDay)}
                                     className="text-gray-300 hover:text-gray-500 transition-colors text-sm"
                                     title="添加内容"
-                            >
+                                >
                                     +
-                            </button>
+                                </button>
                             </div>
                         </div>
                     );
                 }
                 return days;
-            };
-
-            const handlePlatformChange = (platformName) => {
-                setSelectedPlatforms(prevPlatforms => {
-                    if (prevPlatforms.includes(platformName)) {
-                        return prevPlatforms.filter(p => p !== platformName);
-                    } else {
-                        return [...prevPlatforms, platformName];
-                    }
-                });
-            };
-
-            const removeMedia = (day, indexToRemove) => {
-                const dayKey = day.toISOString().split('T')[0];
-                setScheduledPosts(prevPosts => {
-                    const updatedPosts = { ...prevPosts };
-                    if (updatedPosts[dayKey]) {
-                        updatedPosts[dayKey] = updatedPosts[dayKey].filter((_, index) => index !== indexToRemove);
-                        if (updatedPosts[dayKey].length === 0) {
-                            delete updatedPosts[dayKey];
-                        }
-                    }
-                    return updatedPosts;
-                });
-                showTemporaryMessage('内容已删除。', 'error');
-            };
-
-            const clearAllData = () => {
-                if (confirm('确定要清空所有数据吗？此操作不可恢复。')) {
-                    setScheduledPosts({});
-                    localStorage.removeItem('socialMediaCalendar');
-                    showTemporaryMessage('所有数据已清空。', 'error');
-                }
-            };
-
-            const exportData = () => {
-                const dataStr = JSON.stringify(scheduledPosts, null, 2);
-                const dataBlob = new Blob([dataStr], {type: 'application/json'});
-                const url = URL.createObjectURL(dataBlob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `social-media-calendar-backup-${new Date().toISOString().split('T')[0]}.json`;
-                link.click();
-                URL.revokeObjectURL(url);
-            };
-
-            // 导出今日内容
-            const exportTodayContent = () => {
-                const today = getToday().toISOString().split('T')[0];
-                const todaysPosts = scheduledPosts[today] || [];
-                
-                if (todaysPosts.length === 0) {
-                    showTemporaryMessage('今日没有待发布的内容', 'error');
-                    return;
-                }
-
-                let content = `📅 ${today} 发布内容\\n\\n`;
-                
-                todaysPosts.forEach((post, index) => {
-                    content += `【第${index + 1}条】\\n`;
-                    content += `平台：${post.platforms.join('、')}\\n`;
-                    if (post.caption) {
-                        content += `文案：${post.caption}\\n`;
-                    }
-                    if (post.files && post.files.length > 0) {
-                        content += `媒体：${post.files.length}个文件\\n`;
-                    }
-                    content += '\\n';
-                });
-
-                // 复制到剪贴板
-                navigator.clipboard.writeText(content).then(() => {
-                    showTemporaryMessage('今日内容已复制到剪贴板', 'success');
-                }).catch(() => {
-                    showTemporaryMessage('复制失败，请手动复制', 'error');
-                });
-            };
-
-            // 快速发布 - 跳转到平台发布页面
-            const quickPublish = (platform) => {
-                const today = getToday().toISOString().split('T')[0];
-                const todaysPosts = scheduledPosts[today] || [];
-                
-                if (todaysPosts.length === 0) {
-                    showTemporaryMessage('今日没有待发布的内容', 'error');
-                    return;
-                }
-
-                const post = todaysPosts[0];
-                const caption = post.caption || '';
-                
-                // 平台发布页面URL
-                const publishUrls = {
-                    'IG': 'https://www.instagram.com/',
-                    'FB': 'https://www.facebook.com/',
-                    '小红书': 'https://www.xiaohongshu.com/explore',
-                    '抖音': 'https://www.douyin.com/',
-                    '微博': 'https://weibo.com/u/page/publish',
-                    '微信': 'https://mp.weixin.qq.com/'
-                };
-
-                // 复制文案到剪贴板
-                if (caption) {
-                    navigator.clipboard.writeText(caption).then(() => {
-                        showTemporaryMessage(`文案已复制，正在跳转到${platform}`, 'success');
-                        setTimeout(() => {
-                            window.open(publishUrls[platform], '_blank');
-                        }, 1000);
-                    }).catch(() => {
-                        showTemporaryMessage('复制失败，但仍会跳转到发布页面', 'error');
-                        window.open(publishUrls[platform], '_blank');
-                    });
-                } else {
-                    window.open(publishUrls[platform], '_blank');
-                }
-            };
-
-            const addMediaToDay = () => {
-                if (selectedFiles.length === 0 && !captionInput.trim()) {
-                    showTemporaryMessage('请上传图片/视频或输入文案。', 'error');
-                    return;
-                }
-                if (selectedPlatforms.length === 0) {
-                    showTemporaryMessage('请至少选择一个发布平台。', 'error');
-                    return;
-                }
-
-                const dayKey = selectedDay.toISOString().split('T')[0];
-                const newPost = {
-                    platforms: selectedPlatforms,
-                    caption: captionInput.trim(),
-                    files: []
-                };
-
-                if (selectedFiles.length > 0) {
-                    const filePromises = selectedFiles.map(async (file) => {
-                        if (file.type.startsWith('image/')) {
-                            // 压缩图片
-                            const compressedDataUrl = await compressImage(file);
-                            return {
-                                type: 'image',
-                                dataUrl: compressedDataUrl,
-                                originalDataUrl: URL.createObjectURL(file), // 保留原始文件引用
-                                name: file.name,
-                                size: file.size
-                            };
-                        } else if (file.type.startsWith('video/')) {
-                            // 为视频创建缩略图，保留原始文件引用
-                            try {
-                                const thumbnail = await createVideoThumbnail(file);
-                                return {
-                                    type: 'video',
-                                    thumbnail: thumbnail, // 缩略图用于显示
-                                    originalDataUrl: URL.createObjectURL(file), // 原始视频文件
-                                    name: file.name,
-                                    size: file.size,
-                                    isLargeFile: true // 标记为大文件
-                                };
-                            } catch (error) {
-                                console.error('创建视频缩略图失败:', error);
-                                return {
-                                    type: 'video',
-                                    originalDataUrl: URL.createObjectURL(file),
-                                    name: file.name,
-                                    size: file.size,
-                                    isLargeFile: true
-                                };
-                            }
-                        }
-                    });
-
-                    Promise.all(filePromises)
-                        .then(fileData => {
-                            newPost.files = fileData;
-                            setScheduledPosts(prevPosts => {
-                                const updatedPosts = { ...prevPosts };
-                                if (!updatedPosts[dayKey]) {
-                                    updatedPosts[dayKey] = [];
-                                }
-                                updatedPosts[dayKey].push(newPost);
-                                return updatedPosts;
-                            });
-                            closeModal();
-                        })
-                        .catch(() => {
-                            showTemporaryMessage('文件读取失败。', 'error');
-                        });
-                } else {
-                    newPost.type = 'text';
-                    setScheduledPosts(prevPosts => {
-                        const updatedPosts = { ...prevPosts };
-                        if (!updatedPosts[dayKey]) {
-                            updatedPosts[dayKey] = [];
-                        }
-                        updatedPosts[dayKey].push(newPost);
-                        return updatedPosts;
-                    });
-                    closeModal();
-                }
             };
 
             return (
@@ -732,73 +472,10 @@
                         
                         {/* 顶部控制栏 */}
                         <div className="flex justify-between items-start p-4 md:p-8 pb-4">
-                            <div></div> {/* 左侧占位 */}
+                            <div></div>
                             <div className="text-sm text-gray-600 font-medium text-right">
-                                <div className="flex flex-col items-end gap-2 mb-4">
-                                {/* 通知和今日内容按钮 */}
-                                <div className="flex gap-2 mb-2">
-                                    <button
-                                        onClick={requestNotificationPermission}
-                                        className={`text-xs px-2 py-1 rounded transition-colors ${
-                                            notificationsEnabled 
-                                                ? 'bg-green-50 text-green-600 hover:bg-green-100' 
-                                                : 'bg-orange-50 text-orange-600 hover:bg-orange-100'
-                                        }`}
-                                        title={notificationsEnabled ? '通知已开启' : '开启发布提醒'}
-                                    >
-                                        {notificationsEnabled ? '🔔 已开启' : '🔕 开启提醒'}
-                                    </button>
-                                    <button
-                                        onClick={exportTodayContent}
-                                        className="text-xs px-2 py-1 bg-purple-50 text-purple-600 rounded hover:bg-purple-100 transition-colors"
-                                        title="复制今日发布内容"
-                                    >
-                                        📋 今日内容
-                                    </button>
-                                </div>
-                                
-                                {/* 快速发布按钮 */}
-                                {(() => {
-                                    const today = getToday().toISOString().split('T')[0];
-                                    const todaysPosts = scheduledPosts[today] || [];
-                                    if (todaysPosts.length > 0 && todaysPosts[0].platforms) {
-                                        return (
-                                            <div className="flex gap-1 mb-2 flex-wrap justify-end">
-                                                {todaysPosts[0].platforms.map(platform => (
-                                                    <button
-                                                        key={platform}
-                                                        onClick={() => quickPublish(platform)}
-                                                        className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors"
-                                                        title={`快速发布到${platform}`}
-                                                    >
-                                                        🚀 {platform}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        );
-                                    }
-                                    return null;
-                                })()}
-                                
-                                <div className="text-xs text-gray-500">
+                                <div className="text-xs text-gray-500 mb-2">
                                     存储: {Object.keys(scheduledPosts).length} 个日期
-                                </div>
-                                <div className="flex gap-2">
-                                    <button
-                                        onClick={exportData}
-                                        className="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors"
-                                        title="导出数据备份"
-                                    >
-                                        导出
-                                    </button>
-                                    <button
-                                        onClick={clearAllData}
-                                        className="px-3 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600 transition-colors"
-                                        title="清空所有数据"
-                                    >
-                                        清空
-                                    </button>
-                                </div>
                                 </div>
                                 {currentTime.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}
                                 <br />
@@ -816,256 +493,208 @@
                         )}
 
                         <div className="flex items-center justify-center mb-8 gap-3">
-                                <button
-                                    onClick={prevMonth}
+                            <button
+                                onClick={prevMonth}
                                 className="nav-button flex items-center justify-center w-12 h-12 text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-all text-2xl font-light rounded-full"
-                                    aria-label="上个月"
-                                >
+                                aria-label="上个月"
+                            >
                                 <ChevronLeft />
-                                </button>
+                            </button>
                             <h2 className="text-3xl md:text-4xl lg:text-5xl text-gray-400 tracking-widest uppercase" style={{fontWeight: 200}}>
-                                    {getMonthYear()}
-                                </h2>
-                                <button
-                                    onClick={nextMonth}
+                                {getMonthYear()}
+                            </h2>
+                            <button
+                                onClick={nextMonth}
                                 className="nav-button flex items-center justify-center w-12 h-12 text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-all text-2xl font-light rounded-full"
-                                    aria-label="下个月"
-                                >
+                                aria-label="下个月"
+                            >
                                 <ChevronRight />
-                                </button>
-                            </div>
+                            </button>
+                        </div>
 
                         <div className="grid grid-cols-7 gap-0 mb-4 text-center text-gray-400 text-sm tracking-wider">
                             {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => (
                                 <div key={index} className="py-4" style={{fontWeight: 300}}>{day}</div>
-                                    ))}
-                                </div>
+                            ))}
+                        </div>
 
                         <div className="grid grid-cols-7 gap-0">
-                                    {renderCalendarDays()}
-                                </div>
-                    </div>
+                            {renderCalendarDays()}
+                        </div>
 
-                    {showModal && (
-                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                            <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-xl transform transition-all scale-100">
-                                <h3 className="text-2xl font-bold text-gray-800 mb-4 text-center">
-                                    添加内容到 {selectedDay?.toLocaleDateString('zh-CN')}
-                                </h3>
+                        {/* 添加内容模态框 */}
+                        {showModal && (
+                            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                                <div className="bg-white rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+                                    <h2 className="text-xl font-bold mb-4">
+                                        {selectedDay && `${selectedDay.getFullYear()}年${selectedDay.getMonth() + 1}月${selectedDay.getDate()}日`}
+                                    </h2>
 
-                                <div className="mb-4">
-                                    <label htmlFor="mediaUpload" className="block text-gray-700 text-sm font-medium mb-2">
-                                        上传图片或视频 (可选)
-                                    </label>
-                                    <div className="flex items-center justify-center w-full">
-                                        <label
-                                            htmlFor="mediaUpload"
-                                            className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors"
-                                        >
-                                            <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                                                <UploadCloud className="text-gray-400 mb-2 text-2xl" />
-                                                <p className="mb-2 text-sm text-gray-500">
-                                                    <span className="font-semibold">点击上传</span> 或拖放文件 (支持多选)
-                                                </p>
-                                                <p className="text-xs text-gray-500">支持图片 (JPG, PNG, GIF) 或视频 (MP4, MOV)</p>
-                                            </div>
-                                            <input
-                                                id="mediaUpload"
-                                                type="file"
-                                                className="hidden"
-                                                accept="image/*,video/*"
-                                                multiple
-                                                onChange={handleFileChange}
-                                            />
-                                        </label>
-                                    </div>
-                                    {selectedFiles.length > 0 && (
-                                        <div className="mt-2">
-                                            <div className="flex justify-between items-center mb-2">
-                                                <p className="text-sm text-gray-600">已选择 {selectedFiles.length} 个文件</p>
+                                    <div className="mb-4">
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">选择平台</label>
+                                        <div className="flex flex-wrap gap-2">
+                                            {platforms.map(platform => (
                                                 <button
-                                                    onClick={() => setSelectedFiles([])}
-                                                    className="text-red-500 hover:text-red-600 transition-colors"
-                                                    title="清空所有文件"
+                                                    key={platform.name}
+                                                    onClick={() => handlePlatformChange(platform.name)}
+                                                    className={`px-3 py-1 text-sm rounded ${
+                                                        selectedPlatforms.includes(platform.name)
+                                                            ? 'bg-blue-500 text-white'
+                                                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                                    }`}
                                                 >
-                                                    清空全部
+                                                    {platform.name}
                                                 </button>
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto custom-scrollbar">
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="mb-4">
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">文案内容</label>
+                                        <textarea
+                                            value={captionInput}
+                                            onChange={(e) => setCaptionInput(e.target.value)}
+                                            placeholder="输入发布文案..."
+                                            className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            rows="4"
+                                        />
+                                    </div>
+
+                                    <div className="mb-4">
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">上传图片/视频</label>
+                                        <input
+                                            type="file"
+                                            multiple
+                                            accept="image/*,video/*"
+                                            onChange={handleFileChange}
+                                            className="w-full p-2 border border-gray-300 rounded"
+                                        />
+                                    </div>
+
+                                    {selectedFiles.length > 0 && (
+                                        <div className="mb-4">
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">预览文件</label>
+                                            <div className="grid grid-cols-2 gap-2">
                                                 {selectedFiles.map((file, index) => (
                                                     <div key={index} className="relative">
-                                                        <button
-                                                            onClick={() => removeSelectedFile(index)}
-                                                            className="absolute top-1 right-1 z-10 bg-blue-500 text-white rounded-full p-1 hover:bg-blue-600 transition-colors"
-                                                            title="删除此文件"
-                                                        >
-                                                            <XCircle size={12} />
-                                                        </button>
                                                         {file.type.startsWith('image/') ? (
                                                             <img
                                                                 src={URL.createObjectURL(file)}
-                                                                alt={`预览 ${index + 1}`}
-                                                                className="w-full h-20 object-cover rounded-md cursor-pointer hover:opacity-80 transition-opacity"
-                                                                style={{
-                                                                    objectPosition: 'center'
-                                                                }}
+                                                                alt={file.name}
+                                                                className="w-full h-20 object-cover rounded border cursor-pointer"
                                                                 onClick={() => openLightbox({type: 'image', dataUrl: URL.createObjectURL(file), name: file.name})}
-                                                                title="点击查看大图"
                                                             />
                                                         ) : (
-                                                            <div 
-                                                                className="relative cursor-pointer hover:opacity-80 transition-opacity"
+                                                            <div
+                                                                className="w-full h-20 bg-gray-100 rounded border flex items-center justify-center cursor-pointer"
                                                                 onClick={() => openLightbox({type: 'video', dataUrl: URL.createObjectURL(file), name: file.name})}
-                                                                title="点击全屏播放"
                                                             >
-                                                                <video
-                                                                    src={URL.createObjectURL(file)}
-                                                                    className="w-full h-20 object-cover rounded-md"
-                                                                    style={{
-                                                                        objectPosition: 'center'
-                                                                    }}
-                                                                    muted
-                                                                >
-                                                                    您的浏览器不支持视频标签。
-                                                                </video>
-                                                                <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 rounded-md">
-                                                                    <span className="text-white text-lg">▶</span>
-                                                                </div>
+                                                                <span className="text-2xl">🎥</span>
                                                             </div>
                                                         )}
-                                                        <p className="text-xs text-gray-600 mt-1 truncate">{file.name}</p>
+                                                        <button
+                                                            onClick={() => removeSelectedFile(index)}
+                                                            className="absolute -top-2 -right-2 bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm hover:bg-blue-600"
+                                                        >
+                                                            ×
+                                                        </button>
+                                                        <div className="text-xs text-gray-500 mt-1 truncate">{file.name}</div>
                                                     </div>
                                                 ))}
                                             </div>
                                         </div>
                                     )}
-                                </div>
 
-                                <div className="mb-4">
-                                    <label htmlFor="captionInput" className="block text-gray-700 text-sm font-medium mb-2">
-                                        文案
-                                    </label>
-                                    <textarea
-                                        id="captionInput"
-                                        value={captionInput}
-                                        onChange={(e) => setCaptionInput(e.target.value)}
-                                        rows="3"
-                                        placeholder="输入您的发布文案..."
-                                        className="w-full p-3 border border-gray-300 rounded-md focus:ring-gray-500 focus:border-gray-500 transition-colors resize-y"
-                                    ></textarea>
-                                </div>
-
-                                <div className="mb-6">
-                                    <label className="block text-gray-700 text-sm font-medium mb-2">
-                                        选择发布平台
-                                    </label>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {platforms.map(platform => (
-                                            <label key={platform.name} className="inline-flex items-center cursor-pointer">
-                                                <input
-                                                    type="checkbox"
-                                                    value={platform.name}
-                                                    checked={selectedPlatforms.includes(platform.name)}
-                                                    onChange={() => handlePlatformChange(platform.name)}
-                                                    className="form-checkbox h-5 w-5 text-gray-600 rounded focus:ring-gray-500"
-                                                />
-                                                <span className="ml-2 text-gray-700">{platform.name}</span>
-                                            </label>
-                                        ))}
+                                    <div className="flex gap-3">
+                                        <button
+                                            onClick={closeModal}
+                                            className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition-colors"
+                                        >
+                                            取消
+                                        </button>
+                                        <button
+                                            onClick={addMediaToDay}
+                                            className="flex-1 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                                        >
+                                            保存
+                                        </button>
                                     </div>
                                 </div>
-
-                                <div className="flex justify-end space-x-3">
-                                    <button
-                                        onClick={closeModal}
-                                        className="px-5 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors font-medium"
-                                    >
-                                        取消
-                                    </button>
-                                    <button
-                                        onClick={addMediaToDay}
-                                        className="px-5 py-2 bg-gray-700 text-white rounded-md hover:bg-gray-800 transition-colors font-medium shadow-md"
-                                    >
-                                        添加
-                                    </button>
-                                </div>
                             </div>
-                        </div>
-                    )}
+                        )}
 
-                    {/* Lightbox Modal */}
-                    {lightboxMedia && (
-                        <div 
-                            className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4"
-                            onClick={closeLightbox}
-                        >
-                            <div className="flex max-w-7xl max-h-full w-full gap-6" onClick={(e) => e.stopPropagation()}>
-                                <button
-                                    onClick={closeLightbox}
-                                    className="absolute top-6 right-6 z-60 bg-white bg-opacity-20 text-white rounded-full p-2 hover:bg-opacity-30 transition-colors"
-                                    title="关闭"
-                                >
-                                    <XCircle size={24} />
-                                </button>
-                                
-                                {/* 媒体内容区域 */}
-                                <div className="flex-1 flex items-center justify-center">
-                                    {lightboxMedia.type === 'image' ? (
-                                        <img
-                                            src={lightboxMedia.dataUrl}
-                                            alt={lightboxMedia.name}
-                                            className="max-w-full max-h-full object-contain rounded-lg"
-                                        />
-                                    ) : lightboxMedia.type === 'video' ? (
-                                        <video
-                                            src={lightboxMedia.dataUrl}
-                                            controls
-                                            autoPlay
-                                            className="max-w-full max-h-full object-contain rounded-lg"
-                                        >
-                                            您的浏览器不支持视频标签。
-                                        </video>
-                                    ) : (
-                                        // 纯文字类型 - 不显示媒体内容，只显示右侧文字面板
-                                        <div className="flex items-center justify-center text-gray-400 text-xl">
-                                            📝 文字内容
+                        {/* Lightbox模态框 */}
+                        {lightboxMedia && (
+                            <div 
+                                className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4"
+                                onClick={closeLightbox}
+                            >
+                                <div className="flex max-w-7xl max-h-full w-full gap-6" onClick={(e) => e.stopPropagation()}>
+                                    <button
+                                        onClick={closeLightbox}
+                                        className="absolute top-6 right-6 z-60 bg-white bg-opacity-20 text-white rounded-full p-2 hover:bg-opacity-30 transition-colors"
+                                        title="关闭"
+                                    >
+                                        <XCircle size={24} />
+                                    </button>
+                                    
+                                    {/* 媒体内容区域 */}
+                                    <div className="flex-1 flex items-center justify-center">
+                                        {lightboxMedia.type === 'image' ? (
+                                            <img
+                                                src={lightboxMedia.dataUrl}
+                                                alt={lightboxMedia.name}
+                                                className="max-w-full max-h-full object-contain rounded-lg"
+                                            />
+                                        ) : lightboxMedia.type === 'video' ? (
+                                            <video
+                                                src={lightboxMedia.dataUrl}
+                                                controls
+                                                autoPlay
+                                                className="max-w-full max-h-full object-contain rounded-lg"
+                                            >
+                                                您的浏览器不支持视频标签。
+                                            </video>
+                                        ) : (
+                                            <div className="flex items-center justify-center text-gray-400 text-xl">
+                                                📝 文字内容
+                                            </div>
+                                        )}
+                                    </div>
+                                    
+                                    {/* 文字内容区域 */}
+                                    {lightboxMedia.caption && (
+                                        <div className="w-80 bg-white rounded-lg p-6 flex flex-col max-h-full">
+                                            <div className="flex items-center justify-between mb-4">
+                                                <h3 className="text-lg font-semibold text-gray-800">文案内容</h3>
+                                                <button
+                                                    onClick={async () => {
+                                                        try {
+                                                            await navigator.clipboard.writeText(lightboxMedia.caption);
+                                                            showTemporaryMessage('文案已复制到剪贴板', 'success');
+                                                        } catch (err) {
+                                                            showTemporaryMessage('复制失败，请手动复制', 'error');
+                                                        }
+                                                    }}
+                                                    className="px-3 py-1 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 transition-colors flex items-center gap-1"
+                                                    title="复制文案"
+                                                >
+                                                    📋 复制
+                                                </button>
+                                            </div>
+                                            <div className="flex-1 overflow-y-auto border rounded-md p-4 bg-gray-50">
+                                                <p className="text-gray-700 leading-relaxed whitespace-pre-wrap text-base font-normal">
+                                                    {lightboxMedia.caption}
+                                                </p>
+                                            </div>
                                         </div>
                                     )}
                                 </div>
-                                
-                                {/* 文字内容区域 */}
-                                {lightboxMedia.caption && (
-                                    <div className="w-80 bg-white rounded-lg p-6 flex flex-col max-h-full">
-                                        <div className="flex items-center justify-between mb-4">
-                                            <h3 className="text-lg font-semibold text-gray-800">文案内容</h3>
-                                            <button
-                                                onClick={async () => {
-                                                    try {
-                                                        await navigator.clipboard.writeText(lightboxMedia.caption);
-                                                        showTemporaryMessage('文案已复制到剪贴板', 'success');
-                                                    } catch (err) {
-                                                        showTemporaryMessage('复制失败，请手动复制', 'error');
-                                                    }
-                                                }}
-                                                className="px-3 py-1 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 transition-colors flex items-center gap-1"
-                                                title="复制文案"
-                                            >
-                                                📋 复制
-                                            </button>
-                                        </div>
-                                        <div className="flex-1 overflow-y-auto border rounded-md p-4 bg-gray-50">
-                                            <p className="text-gray-700 leading-relaxed whitespace-pre-wrap text-base font-normal">
-                                                {lightboxMedia.caption}
-                                            </p>
-                                        </div>
-                                    </div>
-                                )}
                             </div>
+                        )}
                         </div>
-                    )}
-                        </div> {/* 关闭主要内容区域 */}
-                    </div> {/* 关闭主容器 */}
-                </div> {/* 关闭最外层容器 */}
+                    </div>
+                </div>
             );
         };
 

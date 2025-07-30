@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>最小测试</title>
+</head>
+<body>
+    <h1>HTML测试</h1>
+    <div id="js-test">JavaScript未执行</div>
+    
+    <script>
+        document.getElementById('js-test').innerHTML = 'JavaScript执行成功！';
+        console.log('基本JavaScript工作正常');
+    </script>
+    
+    <div id="react-test">正在加载React...</div>
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <script type="text/babel">
+        const TestComponent = () => {
+            return <div style={{color: 'green', fontSize: '20px'}}>React组件工作正常！</div>;
+        };
+        
+        const container = document.getElementById('react-test');
+        const root = ReactDOM.createRoot(container);
+        root.render(<TestComponent />);
+    </script>
+</body>
+</html>
