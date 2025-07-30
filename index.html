@@ -88,10 +88,22 @@
             VIDEO_QUALITY: 0.7,                     // 视频压缩质量
             THUMBNAIL_SIZE: 200,                    // 缩略图尺寸
             
+            // 视频压缩配置
+            VIDEO_COMPRESSION: {
+                maxWidth: 1280,                     // 视频最大宽度
+                maxHeight: 720,                     // 视频最大高度
+                bitrate: 1000000,                   // 目标码率 1Mbps
+                frameRate: 24,                      // 目标帧率
+                targetSizeMB: 15,                   // 目标文件大小
+                skipCompressionSizeMB: 3,           // 跳过压缩的最小大小
+                quality: 0.8                        // 压缩质量
+            },
+            
             // 存储策略
             AUTO_CLOUD_SYNC: true,                  // 自动云端同步
             PREFER_LOCAL: true,                     // 优先本地存储
             ENABLE_COMPRESSION: true,               // 启用压缩
+            AUTO_VIDEO_COMPRESSION: true,           // 自动视频压缩
             
             // 同步间隔
             SYNC_DELAY: 2000,                       // 同步延迟（毫秒）
@@ -159,8 +171,17 @@
                     // 2. 处理本地存储
                     if (strategy.storeLocal) {
                         if (strategy.needsCompression) {
+                            const startTime = Date.now();
                             result.dataUrl = await this.compressFile(file);
                             result.isCompressed = true;
+                            result.compressionTime = Date.now() - startTime;
+                            
+                            // 估算压缩后的大小
+                            if (result.dataUrl) {
+                                const base64Length = result.dataUrl.split(',')[1]?.length || 0;
+                                const sizeInBytes = (base64Length * 3) / 4; // Base64解码大小估算
+                                result.compressedSize = (sizeInBytes / 1024 / 1024).toFixed(1) + 'MB';
+                            }
                         } else {
                             result.dataUrl = await this.fileToDataUrl(file);
                             result.isCompressed = false;
@@ -268,10 +289,209 @@
                 if (file.type.startsWith('image/')) {
                     return this.compressImage(file);
                 } else if (file.type.startsWith('video/')) {
-                    // 视频压缩比较复杂，先返回原文件DataURL
-                    return this.fileToDataUrl(file);
+                    return this.compressVideo(file);
                 }
                 return this.fileToDataUrl(file);
+            }
+
+            // 🎥 压缩视频
+            async compressVideo(file) {
+                console.log(`🎬 开始压缩视频: ${file.name}, 原始大小: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
+                
+                // 检查是否启用自动压缩
+                if (!STORAGE_CONFIG.AUTO_VIDEO_COMPRESSION) {
+                    console.log('🔧 自动视频压缩已禁用');
+                    return this.fileToDataUrl(file);
+                }
+                
+                // 使用配置的压缩参数
+                const compressionConfig = STORAGE_CONFIG.VIDEO_COMPRESSION;
+
+                // 如果文件已经很小，直接返回
+                if (file.size < compressionConfig.skipCompressionSizeMB * 1024 * 1024) {
+                    console.log('📁 文件已经很小，跳过压缩');
+                    return this.fileToDataUrl(file);
+                }
+
+                try {
+                    // 使用MediaRecorder API进行视频压缩
+                    const compressedBlob = await this.compressVideoWithMediaRecorder(file, compressionConfig);
+                    
+                    if (compressedBlob && compressedBlob.size < file.size) {
+                        console.log(`✅ 视频压缩成功: ${file.name}, 压缩后大小: ${(compressedBlob.size / 1024 / 1024).toFixed(2)} MB`);
+                        return this.blobToDataUrl(compressedBlob);
+                    } else {
+                        console.log('🔄 MediaRecorder压缩效果不佳，尝试其他方案...');
+                        return this.compressVideoFallback(file, compressionConfig);
+                    }
+                } catch (error) {
+                    console.warn('MediaRecorder压缩失败，使用备用方案:', error);
+                    return this.compressVideoFallback(file, compressionConfig);
+                }
+            }
+
+            // 📹 使用MediaRecorder压缩视频
+            async compressVideoWithMediaRecorder(file, config) {
+                return new Promise((resolve, reject) => {
+                    const video = document.createElement('video');
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    video.addEventListener('loadedmetadata', () => {
+                        const { videoWidth, videoHeight } = video;
+                        
+                        // 计算压缩后的尺寸
+                        let targetWidth = videoWidth;
+                        let targetHeight = videoHeight;
+                        
+                        if (videoWidth > config.maxWidth || videoHeight > config.maxHeight) {
+                            const aspectRatio = videoWidth / videoHeight;
+                            if (aspectRatio > 1) {
+                                targetWidth = config.maxWidth;
+                                targetHeight = config.maxWidth / aspectRatio;
+                            } else {
+                                targetHeight = config.maxHeight;
+                                targetWidth = config.maxHeight * aspectRatio;
+                            }
+                        }
+                        
+                        canvas.width = Math.floor(targetWidth);
+                        canvas.height = Math.floor(targetHeight);
+                        
+                        console.log(`🔧 压缩尺寸: ${canvas.width}x${canvas.height}`);
+                        
+                        // 创建Canvas流
+                        const stream = canvas.captureStream(24); // 24fps
+                        
+                        // 配置MediaRecorder
+                        const options = {
+                            mimeType: 'video/webm;codecs=vp9',
+                            videoBitsPerSecond: config.bitrate
+                        };
+                        
+                        // 检查支持的编码格式
+                        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                            options.mimeType = 'video/webm;codecs=vp8';
+                            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                                options.mimeType = 'video/webm';
+                                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                                    reject(new Error('不支持视频压缩格式'));
+                                    return;
+                                }
+                            }
+                        }
+                        
+                        const mediaRecorder = new MediaRecorder(stream, options);
+                        const chunks = [];
+                        
+                        mediaRecorder.ondataavailable = (event) => {
+                            if (event.data.size > 0) {
+                                chunks.push(event.data);
+                            }
+                        };
+                        
+                        mediaRecorder.onstop = () => {
+                            const compressedBlob = new Blob(chunks, { type: options.mimeType });
+                            resolve(compressedBlob);
+                        };
+                        
+                        mediaRecorder.onerror = reject;
+                        
+                        // 开始录制
+                        mediaRecorder.start();
+                        
+                        // 播放原视频并绘制到Canvas
+                        video.addEventListener('play', () => {
+                            const drawFrame = () => {
+                                if (!video.paused && !video.ended) {
+                                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                    requestAnimationFrame(drawFrame);
+                                } else {
+                                    mediaRecorder.stop();
+                                    stream.getTracks().forEach(track => track.stop());
+                                }
+                            };
+                            drawFrame();
+                        });
+                        
+                        video.addEventListener('ended', () => {
+                            mediaRecorder.stop();
+                            stream.getTracks().forEach(track => track.stop());
+                        });
+                        
+                        video.play();
+                    });
+                    
+                    video.addEventListener('error', reject);
+                    video.src = URL.createObjectURL(file);
+                    video.load();
+                });
+            }
+
+            // 🔄 备用视频压缩方案
+            async compressVideoFallback(file, config) {
+                console.log('🔄 使用备用压缩方案...');
+                
+                return new Promise((resolve, reject) => {
+                    const video = document.createElement('video');
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    video.addEventListener('loadedmetadata', async () => {
+                        try {
+                            const { videoWidth, videoHeight, duration } = video;
+                            
+                            // 计算压缩尺寸
+                            let targetWidth = Math.min(videoWidth, config.maxWidth);
+                            let targetHeight = Math.min(videoHeight, config.maxHeight);
+                            
+                            const aspectRatio = videoWidth / videoHeight;
+                            if (targetWidth / targetHeight !== aspectRatio) {
+                                if (targetWidth / aspectRatio <= config.maxHeight) {
+                                    targetHeight = targetWidth / aspectRatio;
+                                } else {
+                                    targetWidth = targetHeight * aspectRatio;
+                                }
+                            }
+                            
+                            canvas.width = Math.floor(targetWidth);
+                            canvas.height = Math.floor(targetHeight);
+                            
+                            // 如果视频太大，返回高质量封面图
+                            if (file.size > config.targetSizeMB * 1024 * 1024) {
+                                console.log('⚠️ 视频文件过大，生成高质量封面');
+                                video.currentTime = Math.min(1, duration * 0.1);
+                                
+                                video.addEventListener('seeked', () => {
+                                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                    const coverDataUrl = canvas.toDataURL('image/jpeg', config.quality);
+                                    resolve(coverDataUrl);
+                                }, { once: true });
+                            } else {
+                                // 文件大小可接受，返回原视频
+                                const originalDataUrl = await this.fileToDataUrl(file);
+                                console.log(`✅ 保持原视频质量: ${file.name}`);
+                                resolve(originalDataUrl);
+                            }
+                        } catch (error) {
+                            reject(error);
+                        }
+                    });
+                    
+                    video.addEventListener('error', reject);
+                    video.src = URL.createObjectURL(file);
+                    video.load();
+                });
+            }
+
+            // 📄 Blob转DataURL
+            async blobToDataUrl(blob) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
             }
 
             // 🖼️ 压缩图片
@@ -1684,7 +1904,20 @@
                                 }
                                 
                                 console.log(`📂 处理文件 ${index + 1}/${selectedFiles.length}: ${file.name}`);
+                                
+                                // 显示压缩进度
+                                if (file.type.startsWith('video/') && file.size > 3 * 1024 * 1024) {
+                                    showTemporaryMessage(`🎬 正在压缩视频: ${file.name}...`, 'info');
+                                }
+                                
                                 const processedFile = await storageManager.processFile(file);
+                                
+                                // 显示压缩结果
+                                if (processedFile.isCompressed && file.type.startsWith('video/')) {
+                                    const originalSize = (file.size / 1024 / 1024).toFixed(1);
+                                    const compressedSize = processedFile.compressedSize || '未知';
+                                    showTemporaryMessage(`✅ 视频压缩完成: ${originalSize}MB → ${compressedSize}`, 'success');
+                                }
                                 
                                 if (uploadProgress) {
                                     setUploadProgress(prev => ({ ...prev, [file.name]: 100 }));
