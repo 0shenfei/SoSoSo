@@ -130,7 +130,6 @@
             
             // 存储策略
             AUTO_CLOUD_SYNC: true,                  // 自动云端同步
-            PREFER_LOCAL: true,                     // 优先本地存储
             ENABLE_COMPRESSION: true,               // 启用压缩
             AUTO_VIDEO_COMPRESSION: true,           // 自动视频压缩
             
@@ -1836,40 +1835,7 @@
             const [currentDate, setCurrentDate] = React.useState(new Date());
             const [user, setUser] = React.useState(null);
             const [isLoading, setIsLoading] = React.useState(true);
-            const [scheduledPosts, setScheduledPosts] = React.useState(() => {
-                try {
-                    const saved = localStorage.getItem('socialMediaCalendar');
-                    const data = saved ? JSON.parse(saved) : {};
-                    
-                    console.log('加载本地数据...');
-                    
-                    // 简单的数据修复：只处理无效的blob URL
-                    Object.keys(data).forEach(dayKey => {
-                        if (data[dayKey] && Array.isArray(data[dayKey])) {
-                            data[dayKey].forEach(post => {
-                                if (post.files && Array.isArray(post.files)) {
-                                    post.files.forEach(file => {
-                                        // 修复无效的blob URLs
-                                        if (file.dataUrl && file.dataUrl.startsWith('blob:')) {
-                                            console.warn(`修复无效的blob URL: ${file.name}`);
-                                            file.dataUrl = file.thumbnail || file.originalDataUrl;
-                                        }
-                                        if (file.originalDataUrl && file.originalDataUrl.startsWith('blob:')) {
-                                            file.originalDataUrl = file.dataUrl || file.thumbnail;
-                                        }
-                                    });
-                                }
-                            });
-                        }
-                    });
-                    
-                    console.log('本地数据加载完成');
-                    return data;
-                } catch (error) {
-                    console.error('加载数据失败:', error);
-                    return {};
-                }
-            });
+            const [scheduledPosts, setScheduledPosts] = React.useState({});
             const [showModal, setShowModal] = React.useState(false);
             const [selectedDay, setSelectedDay] = React.useState(null);
             const [selectedFiles, setSelectedFiles] = React.useState([]);
@@ -1895,163 +1861,72 @@
                 { name: '微信', url: 'https://mp.weixin.qq.com/' }
             ];
 
-            // 📦 智能存储和同步逻辑
+            // ☁️ 云端同步逻辑
             React.useEffect(() => {
-                // 防止空数据触发存储
+                // 防止空数据触发同步
                 if (!scheduledPosts || Object.keys(scheduledPosts).length === 0) {
                     return;
                 }
 
-                try {
-                    // 1. 立即保存到本地存储
-                    const dataToStore = JSON.stringify(scheduledPosts);
+                // 仅在有用户登录且配置了Supabase时进行云端同步
+                if (user && isSupabaseConfigured && STORAGE_CONFIG.AUTO_CLOUD_SYNC) {
+                    console.log('🔄 准备云端同步...');
                     
-                    // 智能存储空间管理
-                    const dataSizeMB = dataToStore.length / (1024 * 1024);
-                    console.log(`📊 数据大小: ${dataSizeMB.toFixed(2)}MB`);
+                    // 设置同步状态
+                    storageManager.storageStats.syncStatus = 'syncing';
                     
-                    if (dataSizeMB > 5) { // 5MB限制
-                        console.warn('⚠️ 数据过大，启动智能清理...');
-                        showTemporaryMessage('🧹 存储空间不足，正在自动清理...', 'info');
-                        
-                        // 智能清理存储空间
-                        const cleanupResult = storageManager.cleanupStorage({...scheduledPosts}, {
-                            maxSizeMB: 4,
-                            maxAgeDays: 30,
-                            aggressive: dataSizeMB > 8 // 超过8MB启用激进模式
-                        });
-                        
-                        if (cleanupResult.cleaned) {
-                            const cleanedDataToStore = JSON.stringify(cleanupResult.posts);
-                            const newSizeMB = cleanedDataToStore.length / (1024 * 1024);
-                            
-                            console.log(`✅ 智能清理完成: ${dataSizeMB.toFixed(2)}MB → ${newSizeMB.toFixed(2)}MB`);
-                            localStorage.setItem('socialMediaCalendar', cleanedDataToStore);
-                            
-                            // 显示清理报告
-                            const report = cleanupResult.cleanupReport;
-                            const freedMB = ((dataToStore.length - cleanedDataToStore.length) / (1024 * 1024)).toFixed(1);
-                            showTemporaryMessage(
-                                `🧹 清理完成: 释放 ${freedMB}MB，优化 ${report.compressedFiles + report.deletedFiles} 个文件`,
-                                'success'
-                            );
-                            
-                            // 更新React状态以反映清理后的数据
-                            setScheduledPosts(cleanupResult.posts);
-                            return;
-                        } else {
-                            showTemporaryMessage('⚠️ 自动清理无法释放足够空间，建议手动管理数据', 'warning');
-                        }
-                    }
-                    
-                    localStorage.setItem('socialMediaCalendar', dataToStore);
-                    console.log('✅ 本地存储已更新');
-                    
-                    // 2. 更新存储统计
-                    const stats = storageManager.updateStats(scheduledPosts);
-                    
-                    // 3. 存储空间预警检查
-                    const storageStatus = storageWarning.checkStorageStatus(stats.localSize, showTemporaryMessage);
-                    
-                    // 如果存储空间紧张，显示清理建议
-                    if (storageStatus !== 'normal') {
-                        const recommendation = storageWarning.recommendCleanupStrategy(stats.localSize);
-                        if (recommendation) {
-                            console.log('💡 清理建议:', recommendation.message);
-                        }
-                    }
-                    
-                    // 3. 智能云端同步策略
-                    if (user && isSupabaseConfigured && STORAGE_CONFIG.AUTO_CLOUD_SYNC) {
-                        // 设置同步状态
-                        storageManager.storageStats.syncStatus = 'syncing';
-                        
-                        const delayedSync = setTimeout(async () => {
-                            try {
-                                showTemporaryMessage('🔄 智能同步中...', 'info');
-                                
-                                // 检查是否有需要云端上传的文件
-                                let hasCloudFiles = false;
-                                Object.values(scheduledPosts).forEach(dayPosts => {
-                                    dayPosts.forEach(post => {
-                                        if (post.files) {
-                                            post.files.forEach(file => {
-                                                if (file.needsCloudUpload && !file.cloudUrl) {
-                                                    hasCloudFiles = true;
-                                                }
-                                            });
-                                        }
-                                    });
-                                });
-                                
-                                if (hasCloudFiles && stats.totalFiles < 10) {
-                                    // 小量文件：完整同步（包含文件上传）
-                                    console.log('📤 执行完整同步（包含文件）');
-                                    await SupabaseService.savePosts(scheduledPosts);
-                                    showTemporaryMessage('✅ 完整同步成功！', 'success');
-                                } else {
-                                    // 大量文件或无需上传：仅同步文案
-                                    console.log('📝 执行文案同步');
-                                    await SupabaseService.savePostsTextOnly(scheduledPosts);
-                                    showTemporaryMessage('✅ 文案同步完成！（文件保持本地）', 'success');
-                                }
-                                
-                                storageManager.storageStats.syncStatus = 'success';
-                                
-                            } catch (error) {
-                                console.error('❌ 云端同步失败:', error);
-                                storageManager.storageStats.syncStatus = 'error';
-                                showTemporaryMessage('⚠️ 云端同步失败，数据已保存在本地', 'warning');
-                            }
-                        }, STORAGE_CONFIG.SYNC_DELAY);
-                        
-                        return () => clearTimeout(delayedSync);
-                    }
-                } catch (error) {
-                    console.error('❌ 本地存储失败:', error);
-                    
-                    // 智能错误处理和自动修复
-                    if (error.name === 'QuotaExceededError' || error.code === 22) {
-                        console.warn('💾 存储配额超限，尝试激进清理...');
-                        showTemporaryMessage('🔧 存储空间严重不足，正在紧急清理...', 'warning');
-                        
+                    const delayedSync = setTimeout(async () => {
                         try {
-                            // 激进清理模式：更短的保留期和更小的限制
-                            const emergencyCleanup = storageManager.cleanupStorage({...scheduledPosts}, {
-                                maxSizeMB: 2,
-                                maxAgeDays: 7,     // 仅保留7天数据
-                                aggressive: true   // 启用激进模式
+                            showTemporaryMessage('🔄 正在同步到云端...', 'info');
+                            
+                            // 检查是否有需要云端上传的文件
+                            let hasCloudFiles = false;
+                            let totalFiles = 0;
+                            
+                            Object.values(scheduledPosts).forEach(dayPosts => {
+                                dayPosts.forEach(post => {
+                                    if (post.files) {
+                                        totalFiles += post.files.length;
+                                        post.files.forEach(file => {
+                                            if (file.needsCloudUpload && !file.cloudUrl) {
+                                                hasCloudFiles = true;
+                                            }
+                                        });
+                                    }
+                                });
                             });
                             
-                            if (emergencyCleanup.cleaned) {
-                                const emergencyDataToStore = JSON.stringify(emergencyCleanup.posts);
-                                localStorage.setItem('socialMediaCalendar', emergencyDataToStore);
-                                setScheduledPosts(emergencyCleanup.posts);
-                                
-                                const report = emergencyCleanup.cleanupReport;
-                                showTemporaryMessage(
-                                    `🆘 紧急清理成功: 删除 ${report.deletedDates.length} 天数据，优化 ${report.compressedFiles} 个文件`, 
-                                    'success'
-                                );
-                                return;
+                            if (hasCloudFiles && totalFiles < 10) {
+                                // 小量文件：完整同步（包含文件上传）
+                                console.log('📤 执行完整同步（包含文件）');
+                                await SupabaseService.savePosts(scheduledPosts);
+                                showTemporaryMessage('✅ 完整同步成功！', 'success');
+                            } else {
+                                // 大量文件或无需上传：仅同步文案
+                                console.log('📝 执行文案同步');
+                                await SupabaseService.savePostsTextOnly(scheduledPosts);
+                                showTemporaryMessage('✅ 文案同步完成！', 'success');
                             }
-                        } catch (retryError) {
-                            console.error('紧急清理也失败:', retryError);
+                            
+                            storageManager.storageStats.syncStatus = 'success';
+                            
+                        } catch (error) {
+                            console.error('❌ 云端同步失败:', error);
+                            storageManager.storageStats.syncStatus = 'error';
+                            showTemporaryMessage('⚠️ 云端同步失败，请检查网络连接', 'error');
                         }
-                        
-                        // 如果清理仍然失败，提供手动选项
-                        showTemporaryMessage(
-                            '⚠️ 浏览器存储空间严重不足！请考虑：1) 清理浏览器数据 2) 删除旧内容 3) 升级到云端存储', 
-                            'error'
-                        );
-                        
-                    } else if (error.message.includes('localStorage')) {
-                        showTemporaryMessage('❌ 浏览器存储被禁用，请检查隐私设置或尝试无痕模式', 'error');
-                    } else {
-                        showTemporaryMessage('❌ 数据保存失败: ' + error.message, 'error');
-                    }
+                    }, STORAGE_CONFIG.SYNC_DELAY);
                     
-                    storageManager.storageStats.syncStatus = 'error';
+                    return () => clearTimeout(delayedSync);
+                } else {
+                    // 未登录或未配置Supabase时的提示
+                    if (!user && isSupabaseConfigured) {
+                        console.log('⚠️ 用户未登录，无法保存数据');
+                        storageManager.storageStats.syncStatus = 'error';
+                    } else if (!isSupabaseConfigured) {
+                        console.log('⚠️ Supabase未配置，无法保存数据');
+                        storageManager.storageStats.syncStatus = 'error';
+                    }
                 }
             }, [scheduledPosts, user]);
 
@@ -2081,40 +1956,27 @@
                         const currentUser = await SupabaseService.getCurrentUser();
                         setUser(currentUser);
 
-                        // 如果用户已登录，只同步云端文案，保持本地文件
+                        // 如果用户已登录，从云端加载完整数据
                         if (currentUser) {
-                            const cloudTextPosts = await SupabaseService.loadTextOnlyPosts();
-                            if (cloudTextPosts && Object.keys(cloudTextPosts).length > 0) {
-                                // 简化合并：只更新文案和平台，保持所有本地文件
-                                setScheduledPosts(prevPosts => {
-                                    const mergedPosts = { ...prevPosts };
-                                    
-                                    Object.entries(cloudTextPosts).forEach(([date, cloudDayPosts]) => {
-                                        cloudDayPosts.forEach((cloudPost, index) => {
-                                            if (mergedPosts[date] && mergedPosts[date][index]) {
-                                                // 只更新文案和平台，保留所有本地文件
-                                                mergedPosts[date][index] = {
-                                                    ...mergedPosts[date][index], // 保持原有数据（包括files）
-                                                    caption: cloudPost.caption,   // 更新文案
-                                                    platforms: cloudPost.platforms // 更新平台
-                                                };
-                                            } else {
-                                                // 新的云端文案数据（无文件）
-                                                if (!mergedPosts[date]) mergedPosts[date] = [];
-                                                mergedPosts[date][index] = {
-                                                    ...cloudPost,
-                                                    files: [] // 云端只有文案，无文件
-                                                };
-                                            }
-                                        });
-                                    });
-                                    
-                                    return mergedPosts;
-                                });
-                                showTemporaryMessage('文案已同步（文件保持本地存储）', 'success');
-                            } else {
-                                showTemporaryMessage('已登录，文案将同步到云端', 'success');
+                            try {
+                                console.log('📥 正在从云端加载数据...');
+                                const cloudPosts = await SupabaseService.loadPosts();
+                                
+                                if (cloudPosts && Object.keys(cloudPosts).length > 0) {
+                                    console.log('✅ 云端数据加载成功');
+                                    setScheduledPosts(cloudPosts);
+                                    showTemporaryMessage('✅ 数据已从云端加载', 'success');
+                                } else {
+                                    console.log('📝 云端暂无数据');
+                                    showTemporaryMessage('已登录，数据将自动同步到云端', 'info');
+                                }
+                            } catch (error) {
+                                console.error('❌ 云端数据加载失败:', error);
+                                showTemporaryMessage('⚠️ 云端数据加载失败，将从空白开始', 'warning');
                             }
+                        } else {
+                            console.log('👤 用户未登录，使用空白状态');
+                            showTemporaryMessage('请登录以保存和同步数据', 'info');
                         }
                     } catch (error) {
                         console.error('认证初始化失败:', error);
@@ -2132,41 +1994,24 @@
                             setUser(session?.user || null);
                             
                             if (event === 'SIGNED_IN' && session?.user) {
-                                showTemporaryMessage('登录成功！正在同步文案...', 'success');
-                                const cloudTextPosts = await SupabaseService.loadTextOnlyPosts();
-                                if (cloudTextPosts && Object.keys(cloudTextPosts).length > 0) {
-                                    // 简化合并：只更新文案，保持所有本地文件
-                                    setScheduledPosts(prevPosts => {
-                                        const mergedPosts = { ...prevPosts };
-                                        
-                                        Object.entries(cloudTextPosts).forEach(([date, cloudDayPosts]) => {
-                                            cloudDayPosts.forEach((cloudPost, index) => {
-                                                if (mergedPosts[date] && mergedPosts[date][index]) {
-                                                    // 只更新文案和平台，保留所有本地文件
-                                                    mergedPosts[date][index] = {
-                                                        ...mergedPosts[date][index], // 保持原有数据（包括files）
-                                                        caption: cloudPost.caption,   // 更新文案
-                                                        platforms: cloudPost.platforms // 更新平台
-                                                    };
-                                                } else {
-                                                    // 新的云端文案数据（无文件）
-                                                    if (!mergedPosts[date]) mergedPosts[date] = [];
-                                                    mergedPosts[date][index] = {
-                                                        ...cloudPost,
-                                                        files: [] // 云端只有文案，无文件
-                                                    };
-                                                }
-                                            });
-                                        });
-                                        
-                                        return mergedPosts;
-                                    });
-                                    showTemporaryMessage('文案同步完成（文件保持本地）', 'success');
-                                } else {
-                                    showTemporaryMessage('登录成功！文案将同步到云端', 'success');
+                                showTemporaryMessage('登录成功！正在从云端加载数据...', 'success');
+                                try {
+                                    const cloudPosts = await SupabaseService.loadPosts();
+                                    if (cloudPosts && Object.keys(cloudPosts).length > 0) {
+                                        console.log('✅ 登录后云端数据加载成功');
+                                        setScheduledPosts(cloudPosts);
+                                        showTemporaryMessage('✅ 云端数据加载完成', 'success');
+                                    } else {
+                                        console.log('📝 云端暂无数据，将开始使用');
+                                        showTemporaryMessage('登录成功！数据将自动同步到云端', 'success');
+                                    }
+                                } catch (error) {
+                                    console.error('❌ 登录后数据加载失败:', error);
+                                    showTemporaryMessage('登录成功！数据加载失败，请刷新重试', 'warning');
                                 }
                             } else if (event === 'SIGNED_OUT') {
-                                showTemporaryMessage('已退出登录', 'success');
+                                setScheduledPosts({}); // 清空数据
+                                showTemporaryMessage('已退出登录，数据已清空', 'info');
                             }
                         }
                     );
@@ -2928,49 +2773,17 @@
                     return Math.min(Math.round(usage * 100), 100);
                 };
                 
-                // 手动清理存储
+                // 云端模式下不需要手动清理功能
                 const handleManualCleanup = async (aggressive = false) => {
-                    setIsCleaningUp(true);
-                    try {
-                        const cleanupOptions = aggressive ? 
-                            { maxSizeMB: 2, maxAgeDays: 7, aggressive: true } :
-                            { maxSizeMB: 5, maxAgeDays: 30, aggressive: false };
-                            
-                        const cleanupResult = storageManager.cleanupStorage({...scheduledPosts}, cleanupOptions);
-                        
-                        if (cleanupResult.cleaned) {
-                            setScheduledPosts(cleanupResult.posts);
-                            localStorage.setItem('socialMediaCalendar', JSON.stringify(cleanupResult.posts));
-                            
-                            const report = cleanupResult.cleanupReport;
-                            const freedMB = (report.freedSpace / (1024 * 1024)).toFixed(1);
-                            showTemporaryMessage(
-                                `🧹 手动清理完成: 释放 ${freedMB}MB，处理 ${report.compressedFiles + report.deletedFiles} 个文件`,
-                                'success'
-                            );
-                        } else {
-                            showTemporaryMessage('ℹ️ 当前数据已经比较精简，无需清理', 'info');
-                        }
-                    } catch (error) {
-                        console.error('手动清理失败:', error);
-                        showTemporaryMessage('❌ 清理失败: ' + error.message, 'error');
-                    } finally {
-                        setIsCleaningUp(false);
-                        setShowManagement(false);
-                    }
+                    showTemporaryMessage('ℹ️ 云端模式下数据由服务器管理，无需手动清理', 'info');
                 };
                 
                 // 清空所有数据
                 const handleClearAllData = () => {
-                    if (confirm('⚠️ 确定要清空所有本地数据吗？此操作不可撤销！')) {
-                        const success = storageManager.clearAllData();
-                        if (success) {
-                            setScheduledPosts({});
-                            showTemporaryMessage('🗑️ 所有本地数据已清空', 'success');
-                            setShowManagement(false);
-                        } else {
-                            showTemporaryMessage('❌ 清空数据失败', 'error');
-                        }
+                    if (confirm('⚠️ 确定要清空所有云端数据吗？此操作不可撤销！')) {
+                        setScheduledPosts({});
+                        showTemporaryMessage('🗑️ 数据已清空，将在下次同步时更新云端', 'success');
+                        setShowManagement(false);
                     }
                 };
 
@@ -2991,28 +2804,20 @@
                                 </button>
                                                             </div>
                             
-                            <div className="space-y-1 text-gray-600">
+                                                        <div className="space-y-1 text-gray-600">
                                 <div>📁 {storageStats.totalFiles} 个文件</div>
-                                <div className="flex items-center gap-2">
-                                    💾 本地: <span className={getStorageUsageColor()}>{formatSize(storageStats.localSize)}</span>
-                                    <span className="text-xs text-gray-400">({getStorageUsagePercent()}%)</span>
-                                </div>
-                                {storageStats.cloudSize > 0 && (
-                                    <div>☁️ 云端: {formatSize(storageStats.cloudSize)}</div>
+                                <div>☁️ 云端存储</div>
+                                {user ? (
+                                    <div className="text-green-600">✅ 已登录</div>
+                                ) : (
+                                    <div className="text-orange-600">⚠️ 未登录</div>
                                 )}
-                                
-                                {/* 存储空间警告 */}
-                                {storageStats.localSize > 8 * 1024 * 1024 && (
-                                    <div className="text-red-500 text-xs mt-1 font-medium">
-                                        ⚠️ 存储空间严重不足
-                                    </div>
-                                )}
-                                                        </div>
+                            </div>
                             
                             {/* 错误状态下显示更多信息 */}
                             {storageStats.syncStatus === 'error' && (
                                 <div className="mt-2 pt-2 border-t text-xs text-red-500">
-                                    💡 检查网络连接或手动清理存储
+                                    💡 检查网络连接或重新登录
                                 </div>
                             )}
                         </div>
@@ -3045,8 +2850,8 @@
                                                             </button>
                                                         </div>
                                 <div className="text-xs text-gray-500 mt-2">
-                                    <div>• 智能清理：保留30天数据</div>
-                                    <div>• 深度清理：仅保留7天数据</div>
+                                    <div>• 云端模式：数据自动管理</div>
+                                    <div>• 清空数据：移除所有内容</div>
                                 </div>
                             </div>
                         )}
@@ -3091,11 +2896,11 @@
                             </div>
                                 ) : (
                                     <div className="flex items-center gap-2">
-                                        <span className="text-gray-400">⚫</span>
-                                        <span className="text-xs text-gray-500">
-                                            本地模式（需配置Supabase启用云端同步）
-                                                                </span>
-                                                        </div>
+                                        <span className="text-red-400">🔴</span>
+                                        <span className="text-xs text-red-500">
+                                            需要配置Supabase才能使用
+                                        </span>
+                                    </div>
                                 )}
                             </div>
                             
