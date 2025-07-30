@@ -1350,8 +1350,8 @@
                                                             className="cursor-pointer"
                                                             onClick={() => openLightbox({
                                                                 ...currentFile,
-                                                                // 对于图片，使用高质量的originalDataUrl或cloudUrl
-                                                                dataUrl: currentFile.cloudUrl || currentFile.originalDataUrl || currentFile.dataUrl,
+                                                                // 对于图片，直接使用本地存储的DataURL
+                                                                dataUrl: currentFile.originalDataUrl || currentFile.dataUrl,
                                                                 caption: postsForDay[0].caption,
                                                                 allFiles: postsForDay[0].files,
                                                                 currentIndex: currentFileIndex
@@ -1364,8 +1364,8 @@
                                                             className="w-full h-full cursor-pointer"
                                                             onClick={() => openLightbox({
                                                                 ...currentFile,
-                                                                // 对于视频，保持cloudUrl用于播放
-                                                                dataUrl: currentFile.cloudUrl || currentFile.originalDataUrl || currentFile.dataUrl,
+                                                                // 对于视频，直接使用本地存储的DataURL
+                                                                dataUrl: currentFile.originalDataUrl || currentFile.dataUrl,
                                                                 caption: postsForDay[0].caption,
                                                                 allFiles: postsForDay[0].files,
                                                                 currentIndex: currentFileIndex
