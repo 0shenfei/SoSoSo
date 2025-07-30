@@ -869,6 +869,89 @@
             async getCurrentUser() {
                 const { data: { user } } = await supabase.auth.getUser();
                 return user;
+            },
+
+            // 🔗 检查云端连接状态
+            async checkConnection() {
+                if (!isSupabaseConfigured) {
+                    return {
+                        status: 'not_configured',
+                        message: 'Supabase未配置',
+                        details: 'URL或API Key未设置'
+                    };
+                }
+
+                try {
+                    console.log('🔍 开始检查云端连接...');
+                    
+                    // 1. 测试基础连接
+                    const startTime = Date.now();
+                    const { data, error } = await supabase.auth.getSession();
+                    const responseTime = Date.now() - startTime;
+                    
+                    if (error) {
+                        return {
+                            status: 'connection_error',
+                            message: '连接失败',
+                            details: error.message,
+                            responseTime
+                        };
+                    }
+
+                    // 2. 测试数据库连接
+                    try {
+                        const { data: testData, error: dbError } = await supabase
+                            .from('posts')
+                            .select('count')
+                            .limit(1);
+                        
+                        if (dbError && !dbError.message.includes('relation "posts" does not exist')) {
+                            return {
+                                status: 'database_error',
+                                message: '数据库连接失败',
+                                details: dbError.message,
+                                responseTime
+                            };
+                        }
+                    } catch (dbError) {
+                        console.warn('数据库连接测试失败:', dbError);
+                    }
+
+                    // 3. 测试存储连接
+                    try {
+                        const { data: buckets, error: storageError } = await supabase.storage.listBuckets();
+                        if (storageError) {
+                            console.warn('存储连接测试失败:', storageError);
+                        }
+                    } catch (storageError) {
+                        console.warn('存储连接测试失败:', storageError);
+                    }
+
+                    // 4. 检查用户认证状态
+                    const user = data?.session?.user;
+                    const authStatus = user ? 'authenticated' : 'anonymous';
+
+                    return {
+                        status: 'connected',
+                        message: '连接正常',
+                        details: {
+                            authStatus,
+                            userId: user?.id || null,
+                            email: user?.email || null,
+                            responseTime: `${responseTime}ms`,
+                            supabaseUrl: SUPABASE_URL,
+                            timestamp: new Date().toISOString()
+                        }
+                    };
+
+                } catch (error) {
+                    console.error('云端连接检查失败:', error);
+                    return {
+                        status: 'error',
+                        message: '检查失败',
+                        details: error.message
+                    };
+                }
             }
         };
 
@@ -1149,15 +1232,29 @@
                 }
             }, [scheduledPosts, user]);
 
-            // 初始化用户认证状态
+            // 初始化用户认证状态和连接检查
             React.useEffect(() => {
                 const initAuth = async () => {
                     if (!isSupabaseConfigured) {
                         setIsLoading(false);
+                        console.log('⚙️ Supabase未配置，使用本地模式');
                         return;
                     }
 
                     try {
+                        // 1. 首先检查云端连接状态
+                        console.log('🔍 启动时检查云端连接...');
+                        const connectionResult = await SupabaseService.checkConnection();
+                        console.log('🔗 连接检查结果:', connectionResult);
+                        
+                        if (connectionResult.status !== 'connected') {
+                            console.warn('⚠️ 云端连接异常:', connectionResult.message);
+                            showTemporaryMessage(`⚠️ 云端连接异常: ${connectionResult.message}`, 'warning');
+                        } else {
+                            console.log(`✅ 云端连接正常 (${connectionResult.details.responseTime})`);
+                        }
+
+                        // 2. 获取当前用户
                         const currentUser = await SupabaseService.getCurrentUser();
                         setUser(currentUser);
 
@@ -1827,6 +1924,71 @@
                 return days;
             };
 
+            // 🔗 云端连接检查组件
+            const ConnectionChecker = ({ showTemporaryMessage }) => {
+                const [connectionStatus, setConnectionStatus] = React.useState(null);
+                const [isChecking, setIsChecking] = React.useState(false);
+
+                const checkConnection = async () => {
+                    setIsChecking(true);
+                    showTemporaryMessage('🔍 正在检查云端连接...', 'info');
+                    
+                    try {
+                        const result = await SupabaseService.checkConnection();
+                        setConnectionStatus(result);
+                        
+                        if (result.status === 'connected') {
+                            showTemporaryMessage(`✅ ${result.message} (${result.details.responseTime})`, 'success');
+                        } else {
+                            showTemporaryMessage(`❌ ${result.message}: ${result.details}`, 'error');
+                        }
+                    } catch (error) {
+                        showTemporaryMessage('❌ 连接检查失败', 'error');
+                    } finally {
+                        setIsChecking(false);
+                    }
+                };
+
+                const getStatusIcon = () => {
+                    if (isChecking) return '🔄';
+                    if (!connectionStatus) return '🔗';
+                    
+                    switch (connectionStatus.status) {
+                        case 'connected': return '✅';
+                        case 'not_configured': return '⚙️';
+                        case 'connection_error': return '❌';
+                        case 'database_error': return '🗄️';
+                        default: return '❓';
+                    }
+                };
+
+                const getStatusColor = () => {
+                    if (isChecking) return 'text-blue-500';
+                    if (!connectionStatus) return 'text-gray-500';
+                    
+                    switch (connectionStatus.status) {
+                        case 'connected': return 'text-green-500';
+                        case 'not_configured': return 'text-orange-500';
+                        case 'connection_error': 
+                        case 'database_error': 
+                        case 'error': return 'text-red-500';
+                        default: return 'text-gray-500';
+                    }
+                };
+
+                return (
+                    <button
+                        onClick={checkConnection}
+                        disabled={isChecking}
+                        className={`flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-gray-100 transition-colors ${getStatusColor()}`}
+                        title="检查云端连接状态"
+                    >
+                        <span className="text-sm">{getStatusIcon()}</span>
+                        <span>{isChecking ? '检查中...' : '连接检查'}</span>
+                    </button>
+                );
+            };
+
             // 📊 存储状态组件
             const StorageStatusDisplay = () => {
                 const [storageStats, setStorageStats] = React.useState(storageManager.storageStats);
@@ -1921,6 +2083,7 @@
                                             <div className="flex items-center gap-2">
                                                 <span className="text-green-600">🟢</span>
                                                 <span>云端同步已开启</span>
+                                                <ConnectionChecker showTemporaryMessage={showTemporaryMessage} />
                                                 <button
                                                     onClick={async () => {
                                                         await SupabaseService.signOut();
@@ -1934,6 +2097,7 @@
                                             <div className="flex items-center gap-2">
                                                 <span className="text-orange-600">🟡</span>
                                                 <span>本地存储</span>
+                                                <ConnectionChecker showTemporaryMessage={showTemporaryMessage} />
                                                 <AuthModal showTemporaryMessage={showTemporaryMessage} />
                                                             </div>
                                                         )}
