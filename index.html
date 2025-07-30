@@ -106,6 +106,7 @@
             const [currentTime, setCurrentTime] = React.useState(new Date());
             const [lightboxMedia, setLightboxMedia] = React.useState(null);
             const [carouselIndices, setCarouselIndices] = React.useState({});
+            const [notificationsEnabled, setNotificationsEnabled] = React.useState(false);
 
             const platforms = [
                 { name: 'IG', url: 'https://www.instagram.com/' },
@@ -153,6 +154,25 @@
                 document.addEventListener('keydown', handleKeyDown);
                 return () => document.removeEventListener('keydown', handleKeyDown);
             }, [lightboxMedia]);
+
+            // 初始化通知权限和定时检查
+            React.useEffect(() => {
+                const savedNotificationState = localStorage.getItem('notificationsEnabled');
+                if (savedNotificationState === 'true' && 'Notification' in window && Notification.permission === 'granted') {
+                    setNotificationsEnabled(true);
+                }
+
+                // 每分钟检查一次是否需要发送提醒
+                const checkInterval = setInterval(() => {
+                    const now = new Date();
+                    // 在9:00, 12:00, 15:00, 18:00 的整点提醒
+                    if ([9, 12, 15, 18].includes(now.getHours()) && now.getMinutes() === 0 && now.getSeconds() < 5) {
+                        checkTodaysPosts();
+                    }
+                }, 1000);
+
+                return () => clearInterval(checkInterval);
+            }, [scheduledPosts, notificationsEnabled]);
 
             const showTemporaryMessage = (text, type = 'success') => {
                 if (type === 'error') {
@@ -256,6 +276,60 @@
 
             const closeLightbox = () => {
                 setLightboxMedia(null);
+            };
+
+            // 请求通知权限
+            const requestNotificationPermission = async () => {
+                if ('Notification' in window) {
+                    const permission = await Notification.requestPermission();
+                    if (permission === 'granted') {
+                        setNotificationsEnabled(true);
+                        localStorage.setItem('notificationsEnabled', 'true');
+                        showTemporaryMessage('通知权限已开启，我们会在发布时间提醒您', 'success');
+                } else {
+                        showTemporaryMessage('需要开启通知权限才能使用提醒功能', 'error');
+                    }
+                } else {
+                    showTemporaryMessage('您的浏览器不支持通知功能', 'error');
+                }
+            };
+
+            // 发送通知提醒
+            const sendNotification = (title, body, data) => {
+                if (notificationsEnabled && 'Notification' in window && Notification.permission === 'granted') {
+                    const notification = new Notification(title, {
+                        body: body,
+                        icon: '/favicon.ico',
+                        badge: '/favicon.ico',
+                        tag: 'social-media-reminder',
+                        data: data
+                    });
+                    
+                    notification.onclick = () => {
+                        window.focus();
+                        notification.close();
+                    };
+                }
+            };
+
+            // 检查今日待发布内容
+            const checkTodaysPosts = () => {
+                const today = getToday().toISOString().split('T')[0];
+                const todaysPosts = scheduledPosts[today] || [];
+                
+                if (todaysPosts.length > 0) {
+                    const platforms = todaysPosts[0].platforms || [];
+                    const caption = todaysPosts[0].caption || '';
+                    const hasFiles = todaysPosts[0].files && todaysPosts[0].files.length > 0;
+                    
+                    let contentType = hasFiles ? `${todaysPosts[0].files.length}个媒体文件` : '文字内容';
+                    
+                    sendNotification(
+                        '📅 今日发布提醒',
+                        `您有内容需要发布到：${platforms.join('、')}\\n内容：${contentType}`,
+                        { date: today, platforms, caption }
+                    );
+                }
             };
 
             // 轮播逻辑
@@ -399,7 +473,7 @@
                                                                 muted
                                                             />
                                                         )}
-                                                    </div>
+                                        </div>
                                                 );
                                             }
                                         })()}
@@ -409,13 +483,13 @@
                                         postsForDay[0].caption && (
                                             <div className="relative group w-full h-full">
                                                 {/* 删除按钮 */}
-                                                <button
+                                            <button
                                                     onClick={() => removeMedia(currentDay, 0)}
                                                     className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity bg-white rounded-full p-1 shadow-md hover:bg-gray-50"
-                                                    title="删除内容"
-                                                >
+                                                title="删除内容"
+                                            >
                                                     <XCircle size={12} className="text-gray-600" />
-                                                </button>
+                                            </button>
                                                 
                                                 <div 
                                                     className="w-full h-full p-3 cursor-pointer bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 hover:from-blue-100 hover:to-indigo-100 transition-colors flex items-center justify-center"
@@ -430,8 +504,8 @@
                                                             : postsForDay[0].caption
                                                         }
                                                     </p>
-                                                </div>
-                                            </div>
+                                        </div>
+                                    </div>
                                         )
                                     )
                                 ) : null}
@@ -439,13 +513,13 @@
                             
                             {/* 底部添加按钮 - 居中显示 */}
                             <div className="flex justify-center py-2">
-                                <button
-                                    onClick={() => openModal(currentDay)}
+                            <button
+                                onClick={() => openModal(currentDay)}
                                     className="text-gray-300 hover:text-gray-500 transition-colors text-sm"
                                     title="添加内容"
-                                >
+                            >
                                     +
-                                </button>
+                            </button>
                             </div>
                         </div>
                     );
@@ -495,6 +569,77 @@
                 link.download = `social-media-calendar-backup-${new Date().toISOString().split('T')[0]}.json`;
                 link.click();
                 URL.revokeObjectURL(url);
+            };
+
+            // 导出今日内容
+            const exportTodayContent = () => {
+                const today = getToday().toISOString().split('T')[0];
+                const todaysPosts = scheduledPosts[today] || [];
+                
+                if (todaysPosts.length === 0) {
+                    showTemporaryMessage('今日没有待发布的内容', 'error');
+                    return;
+                }
+
+                let content = `📅 ${today} 发布内容\\n\\n`;
+                
+                todaysPosts.forEach((post, index) => {
+                    content += `【第${index + 1}条】\\n`;
+                    content += `平台：${post.platforms.join('、')}\\n`;
+                    if (post.caption) {
+                        content += `文案：${post.caption}\\n`;
+                    }
+                    if (post.files && post.files.length > 0) {
+                        content += `媒体：${post.files.length}个文件\\n`;
+                    }
+                    content += '\\n';
+                });
+
+                // 复制到剪贴板
+                navigator.clipboard.writeText(content).then(() => {
+                    showTemporaryMessage('今日内容已复制到剪贴板', 'success');
+                }).catch(() => {
+                    showTemporaryMessage('复制失败，请手动复制', 'error');
+                });
+            };
+
+            // 快速发布 - 跳转到平台发布页面
+            const quickPublish = (platform) => {
+                const today = getToday().toISOString().split('T')[0];
+                const todaysPosts = scheduledPosts[today] || [];
+                
+                if (todaysPosts.length === 0) {
+                    showTemporaryMessage('今日没有待发布的内容', 'error');
+                    return;
+                }
+
+                const post = todaysPosts[0];
+                const caption = post.caption || '';
+                
+                // 平台发布页面URL
+                const publishUrls = {
+                    'IG': 'https://www.instagram.com/',
+                    'FB': 'https://www.facebook.com/',
+                    '小红书': 'https://www.xiaohongshu.com/explore',
+                    '抖音': 'https://www.douyin.com/',
+                    '微博': 'https://weibo.com/u/page/publish',
+                    '微信': 'https://mp.weixin.qq.com/'
+                };
+
+                // 复制文案到剪贴板
+                if (caption) {
+                    navigator.clipboard.writeText(caption).then(() => {
+                        showTemporaryMessage(`文案已复制，正在跳转到${platform}`, 'success');
+                        setTimeout(() => {
+                            window.open(publishUrls[platform], '_blank');
+                        }, 1000);
+                    }).catch(() => {
+                        showTemporaryMessage('复制失败，但仍会跳转到发布页面', 'error');
+                        window.open(publishUrls[platform], '_blank');
+                    });
+                } else {
+                    window.open(publishUrls[platform], '_blank');
+                }
             };
 
             const addMediaToDay = () => {
@@ -581,13 +726,58 @@
                 }
             };
 
-            return (
+                                                return (
                 <div className="min-h-screen bg-gray-50 p-4 md:p-6 font-sans antialiased">
                     <div className="max-w-7xl mx-auto bg-white p-4 md:p-8 relative overflow-hidden">
 
 
                         <div className="absolute top-4 right-4 text-sm text-gray-600 font-medium text-right">
-                            <div className="flex flex-col items-end gap-2 mb-2">
+                            <div className="flex flex-col items-end gap-2 mb-4">
+                                {/* 通知和今日内容按钮 */}
+                                <div className="flex gap-2 mb-2">
+                                    <button
+                                        onClick={requestNotificationPermission}
+                                        className={`text-xs px-2 py-1 rounded transition-colors ${
+                                            notificationsEnabled 
+                                                ? 'bg-green-50 text-green-600 hover:bg-green-100' 
+                                                : 'bg-orange-50 text-orange-600 hover:bg-orange-100'
+                                        }`}
+                                        title={notificationsEnabled ? '通知已开启' : '开启发布提醒'}
+                                    >
+                                        {notificationsEnabled ? '🔔 已开启' : '🔕 开启提醒'}
+                                    </button>
+                                    <button
+                                        onClick={exportTodayContent}
+                                        className="text-xs px-2 py-1 bg-purple-50 text-purple-600 rounded hover:bg-purple-100 transition-colors"
+                                        title="复制今日发布内容"
+                                    >
+                                        📋 今日内容
+                                    </button>
+                                </div>
+                                
+                                {/* 快速发布按钮 */}
+                                {(() => {
+                                    const today = getToday().toISOString().split('T')[0];
+                                    const todaysPosts = scheduledPosts[today] || [];
+                                    if (todaysPosts.length > 0 && todaysPosts[0].platforms) {
+                                        return (
+                                            <div className="flex gap-1 mb-2 flex-wrap justify-end">
+                                                {todaysPosts[0].platforms.map(platform => (
+                                                    <button
+                                                        key={platform}
+                                                        onClick={() => quickPublish(platform)}
+                                                        className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors"
+                                                        title={`快速发布到${platform}`}
+                                                    >
+                                                        🚀 {platform}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        );
+                                    }
+                                    return null;
+                                })()}
+                                
                                 <div className="text-xs text-gray-500">
                                     存储: {Object.keys(scheduledPosts).length} 个日期
                                 </div>
@@ -620,34 +810,34 @@
                         )}
 
                         <div className="flex items-center justify-center mb-8 gap-3">
-                            <button
-                                onClick={prevMonth}
+                                <button
+                                    onClick={prevMonth}
                                 className="nav-button flex items-center justify-center w-12 h-12 text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-all text-2xl font-light rounded-full"
-                                aria-label="上个月"
-                            >
+                                    aria-label="上个月"
+                                >
                                 <ChevronLeft />
-                            </button>
+                                </button>
                             <h2 className="text-3xl md:text-4xl lg:text-5xl text-gray-400 tracking-widest uppercase" style={{fontWeight: 200}}>
-                                {getMonthYear()}
-                            </h2>
-                            <button
-                                onClick={nextMonth}
+                                    {getMonthYear()}
+                                </h2>
+                                <button
+                                    onClick={nextMonth}
                                 className="nav-button flex items-center justify-center w-12 h-12 text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-all text-2xl font-light rounded-full"
-                                aria-label="下个月"
-                            >
+                                    aria-label="下个月"
+                                >
                                 <ChevronRight />
-                            </button>
-                        </div>
+                                </button>
+                            </div>
 
                         <div className="grid grid-cols-7 gap-0 mb-4 text-center text-gray-400 text-sm tracking-wider">
                             {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => (
                                 <div key={index} className="py-4" style={{fontWeight: 300}}>{day}</div>
-                            ))}
-                        </div>
+                                    ))}
+                                </div>
 
                         <div className="grid grid-cols-7 gap-0">
-                            {renderCalendarDays()}
-                        </div>
+                                    {renderCalendarDays()}
+                                </div>
                     </div>
 
                     {showModal && (
