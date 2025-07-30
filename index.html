@@ -103,11 +103,17 @@
                     });
 
                     // 先删除现有数据，再插入新数据
-                    await supabase.from('posts').delete().eq('user_id', user.id);
-                    
-                    if (postsData.length > 0) {
-                        const { error } = await supabase.from('posts').insert(postsData);
-                        if (error) console.error('保存失败:', error);
+                    try {
+                        await supabase.from('posts').delete().eq('user_id', user.id);
+                        
+                        if (postsData.length > 0) {
+                            const { error } = await supabase.from('posts').insert(postsData);
+                            if (error) {
+                                console.log('数据库表尚未创建，当前仅本地存储模式');
+                            }
+                        }
+                    } catch (dbError) {
+                        console.log('数据库表尚未创建，当前仅本地存储模式');
                     }
                 } catch (error) {
                     console.error('Supabase保存错误:', error);
