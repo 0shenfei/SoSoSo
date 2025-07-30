@@ -1752,14 +1752,11 @@
                                                     />
                                                 );
                                             } else if (currentMedia.type === 'video') {
-                                                // 智能选择视频源：云端URL > 本地压缩视频 > 原始视频 > 缩略图
-                                                const videoSrc = currentMedia.cloudUrl ||  // 优先使用云端URL
-                                                               (currentMedia.dataUrl && currentMedia.dataUrl.startsWith('data:video/') ? currentMedia.dataUrl : null) ||
-                                                               (currentMedia.originalDataUrl && currentMedia.originalDataUrl.startsWith('data:video/') ? currentMedia.originalDataUrl : null) ||
-                                                               (currentMedia.dataUrl && currentMedia.dataUrl.startsWith('blob:') ? currentMedia.dataUrl : null) ||
-                                                               (currentMedia.originalDataUrl && currentMedia.originalDataUrl.startsWith('blob:') ? currentMedia.originalDataUrl : null);
+                                                // 简化的视频源选择：直接使用DataURL
+                                                const videoSrc = currentMedia.originalDataUrl || currentMedia.dataUrl;
+                                                console.log('Lightbox视频源:', videoSrc?.substring(0, 50) + '...');
                                                 
-                                                if (videoSrc) {
+                                                if (videoSrc && (videoSrc.startsWith('data:video/') || videoSrc.startsWith('blob:'))) {
                                                     return (
                                                         <video
                                                             src={videoSrc}
@@ -1767,22 +1764,17 @@
                                                             autoPlay
                                                             className="max-w-full max-h-full object-contain rounded-lg"
                                                             onError={(e) => {
-                                                                console.error('视频加载失败:', videoSrc);
-                                                                // 如果云端视频失败，尝试本地视频
-                                                                if (currentMedia.cloudUrl && (currentMedia.dataUrl || currentMedia.originalDataUrl)) {
-                                                                    const fallbackSrc = (currentMedia.dataUrl && currentMedia.dataUrl.startsWith('data:video/')) ? 
-                                                                                       currentMedia.dataUrl : currentMedia.originalDataUrl;
-                                                                    if (fallbackSrc && fallbackSrc !== videoSrc) {
-                                                                        e.target.src = fallbackSrc;
-                                                                    }
-                                                                }
+                                                                console.error('Lightbox视频播放失败:', currentMedia.name, videoSrc?.substring(0, 50) + '...');
+                                                            }}
+                                                            onLoadedData={() => {
+                                                                console.log('Lightbox视频播放成功:', currentMedia.name);
                                                             }}
                                                         >
                                                             您的浏览器不支持视频标签。
                                                         </video>
                                                     );
                                                 } else {
-                                                    // 如果没有有效的视频源，显示缩略图
+                                                    // 如果没有有效的视频源，显示调试信息
                                                     return (
                                                         <div className="flex flex-col items-center justify-center text-gray-400">
                                                             {currentMedia.thumbnail ? (
@@ -1794,8 +1786,11 @@
                                                             ) : (
                                                                 <div className="text-8xl mb-4">🎥</div>
                                                             )}
-                                                            <p className="text-lg">视频预览不可用</p>
+                                                            <p className="text-lg">视频数据无效</p>
                                                             <p className="text-sm">文件：{currentMedia.name}</p>
+                                                            <p className="text-xs text-red-400">Debug: videoSrc = {videoSrc || 'null'}</p>
+                                                            <p className="text-xs text-red-400">dataUrl = {currentMedia.dataUrl?.substring(0, 20) || 'null'}</p>
+                                                            <p className="text-xs text-red-400">originalDataUrl = {currentMedia.originalDataUrl?.substring(0, 20) || 'null'}</p>
                                                         </div>
                                                     );
                                                 }
