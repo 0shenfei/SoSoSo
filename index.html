@@ -42,6 +42,22 @@
             background-color: #f9fafb;
             color: #9ca3af;
         }
+        .carousel-indicator {
+            transition: all 0.3s ease;
+        }
+        .media-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        .media-container img,
+        .media-container video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: center;
+        }
     </style>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -81,6 +97,7 @@
             const [currentView, setCurrentView] = React.useState('calendar');
             const [currentTime, setCurrentTime] = React.useState(new Date());
             const [lightboxMedia, setLightboxMedia] = React.useState(null);
+            const [carouselIndices, setCarouselIndices] = React.useState({});
 
             const platforms = [
                 { name: 'IG', url: 'https://www.instagram.com/' },
@@ -233,6 +250,27 @@
                 setLightboxMedia(null);
             };
 
+            // 轮播逻辑
+            React.useEffect(() => {
+                const intervals = {};
+                
+                Object.keys(scheduledPosts).forEach(dayKey => {
+                    const posts = scheduledPosts[dayKey];
+                    if (posts.length > 0 && posts[0].files && posts[0].files.length > 1) {
+                        intervals[dayKey] = setInterval(() => {
+                            setCarouselIndices(prev => ({
+                                ...prev,
+                                [dayKey]: ((prev[dayKey] || 0) + 1) % posts[0].files.length
+                            }));
+                        }, 3000); // 每3秒切换
+                    }
+                });
+
+                return () => {
+                    Object.values(intervals).forEach(interval => clearInterval(interval));
+                };
+            }, [scheduledPosts]);
+
             const getMonthYear = () => {
                 return currentDate.toLocaleString('zh-CN', { month: 'long', year: 'numeric' });
             };
@@ -288,7 +326,7 @@
                                 
                                 {/* 主要内容区域 - 占满整个格子 */}
                                 {postsForDay.length > 0 && postsForDay[0].files && postsForDay[0].files.length > 0 ? (
-                                    <div className="relative group w-full h-full">
+                                    <div className="relative group media-container">
                                         {/* 删除按钮 */}
                                         <button
                                             onClick={() => removeMedia(currentDay, 0)}
@@ -298,39 +336,62 @@
                                             <XCircle size={12} className="text-gray-600" />
                                         </button>
                                         
-                                        {postsForDay[0].files[0].type === 'image' ? (
-                                            <img
-                                                src={postsForDay[0].files[0].dataUrl || postsForDay[0].files[0].originalDataUrl}
-                                                alt="内容图片"
-                                                className="w-full h-full object-cover cursor-pointer"
-                                                onClick={() => openLightbox({
-                                                    ...postsForDay[0].files[0],
-                                                    dataUrl: postsForDay[0].files[0].originalDataUrl || postsForDay[0].files[0].dataUrl
-                                                })}
-                                            />
-                                        ) : (
-                                            <div 
-                                                className="w-full h-full cursor-pointer"
-                                                onClick={() => openLightbox({
-                                                    ...postsForDay[0].files[0],
-                                                    dataUrl: postsForDay[0].files[0].originalDataUrl
-                                                })}
-                                            >
-                                                {postsForDay[0].files[0].thumbnail ? (
-                                                    <img
-                                                        src={postsForDay[0].files[0].thumbnail}
-                                                        className="w-full h-full object-cover"
-                                                        alt="视频缩略图"
+                                        {/* 多个文件时显示轮播指示器 */}
+                                        {postsForDay[0].files.length > 1 && (
+                                            <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 z-10 flex space-x-1 bg-black bg-opacity-30 px-2 py-1 rounded-full">
+                                                {postsForDay[0].files.map((_, index) => (
+                                                    <div
+                                                        key={index}
+                                                        className={`w-1.5 h-1.5 rounded-full carousel-indicator ${
+                                                            index === (carouselIndices[dayKey] || 0) 
+                                                                ? 'bg-white' 
+                                                                : 'bg-white bg-opacity-50'
+                                                        }`}
                                                     />
-                                                ) : (
-                                                    <video
-                                                        src={postsForDay[0].files[0].originalDataUrl}
-                                                        className="w-full h-full object-cover"
-                                                        muted
-                                                    />
-                                                )}
+                                                ))}
                                             </div>
                                         )}
+                                        
+                                        {(() => {
+                                            const currentFileIndex = carouselIndices[dayKey] || 0;
+                                            const currentFile = postsForDay[0].files[currentFileIndex];
+                                            
+                                            if (currentFile.type === 'image') {
+                                                return (
+                                                    <img
+                                                        src={currentFile.dataUrl || currentFile.originalDataUrl}
+                                                        alt="内容图片"
+                                                        className="cursor-pointer"
+                                                        onClick={() => openLightbox({
+                                                            ...currentFile,
+                                                            dataUrl: currentFile.originalDataUrl || currentFile.dataUrl
+                                                        })}
+                                                    />
+                                                );
+                                            } else {
+                                                return (
+                                                    <div 
+                                                        className="w-full h-full cursor-pointer"
+                                                        onClick={() => openLightbox({
+                                                            ...currentFile,
+                                                            dataUrl: currentFile.originalDataUrl
+                                                        })}
+                                                    >
+                                                        {currentFile.thumbnail ? (
+                                                            <img
+                                                                src={currentFile.thumbnail}
+                                                                alt="视频缩略图"
+                                                            />
+                                                        ) : (
+                                                            <video
+                                                                src={currentFile.originalDataUrl}
+                                                                muted
+                                                            />
+                                                        )}
+                                                    </div>
+                                                );
+                                            }
+                                        })()}
                                     </div>
                                 ) : null}
                             </div>
@@ -608,6 +669,9 @@
                                                                 src={URL.createObjectURL(file)}
                                                                 alt={`预览 ${index + 1}`}
                                                                 className="w-full h-20 object-cover rounded-md cursor-pointer hover:opacity-80 transition-opacity"
+                                                                style={{
+                                                                    objectPosition: 'center'
+                                                                }}
                                                                 onClick={() => openLightbox({type: 'image', dataUrl: URL.createObjectURL(file), name: file.name})}
                                                                 title="点击查看大图"
                                                             />
@@ -620,6 +684,9 @@
                                                                 <video
                                                                     src={URL.createObjectURL(file)}
                                                                     className="w-full h-20 object-cover rounded-md"
+                                                                    style={{
+                                                                        objectPosition: 'center'
+                                                                    }}
                                                                     muted
                                                                 >
                                                                     您的浏览器不支持视频标签。
