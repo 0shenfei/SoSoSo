@@ -333,7 +333,8 @@
                                 <div className="absolute top-2 left-2 text-xs text-gray-400 z-10" style={{fontWeight: 300}}>{day}</div>
                                 
                                 {/* 主要内容区域 - 占满整个格子 */}
-                                {postsForDay.length > 0 && postsForDay[0].files && postsForDay[0].files.length > 0 ? (
+                                {postsForDay.length > 0 ? (
+                                    postsForDay[0].files && postsForDay[0].files.length > 0 ? (
                                     <div className="relative group media-container">
                                         {/* 删除按钮 */}
                                         <button
@@ -372,7 +373,8 @@
                                                         className="cursor-pointer"
                                                         onClick={() => openLightbox({
                                                             ...currentFile,
-                                                            dataUrl: currentFile.originalDataUrl || currentFile.dataUrl
+                                                            dataUrl: currentFile.originalDataUrl || currentFile.dataUrl,
+                                                            caption: postsForDay[0].caption
                                                         })}
                                                     />
                                                 );
@@ -382,7 +384,8 @@
                                                         className="w-full h-full cursor-pointer"
                                                         onClick={() => openLightbox({
                                                             ...currentFile,
-                                                            dataUrl: currentFile.originalDataUrl
+                                                            dataUrl: currentFile.originalDataUrl,
+                                                            caption: postsForDay[0].caption
                                                         })}
                                                     >
                                                         {currentFile.thumbnail ? (
@@ -401,6 +404,36 @@
                                             }
                                         })()}
                                     </div>
+                                    ) : (
+                                        // 纯文字显示
+                                        postsForDay[0].caption && (
+                                            <div className="relative group w-full h-full">
+                                                {/* 删除按钮 */}
+                                                <button
+                                                    onClick={() => removeMedia(currentDay, 0)}
+                                                    className="absolute top-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity bg-white rounded-full p-1 shadow-md hover:bg-gray-50"
+                                                    title="删除内容"
+                                                >
+                                                    <XCircle size={12} className="text-gray-600" />
+                                                </button>
+                                                
+                                                <div 
+                                                    className="w-full h-full p-3 cursor-pointer bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 hover:from-blue-100 hover:to-indigo-100 transition-colors flex items-center justify-center"
+                                                    onClick={() => openLightbox({
+                                                        type: 'text',
+                                                        caption: postsForDay[0].caption
+                                                    })}
+                                                >
+                                                    <p className="text-gray-700 text-xs leading-relaxed text-center line-clamp-6 font-medium">
+                                                        {postsForDay[0].caption.length > 60 
+                                                            ? postsForDay[0].caption.substring(0, 60) + '...' 
+                                                            : postsForDay[0].caption
+                                                        }
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        )
+                                    )
                                 ) : null}
                             </div>
                             
@@ -767,44 +800,70 @@
                     {/* Lightbox Modal */}
                     {lightboxMedia && (
                         <div 
-                            className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50"
+                            className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4"
                             onClick={closeLightbox}
                         >
-                            <div className="relative max-w-full max-h-full p-4">
+                            <div className="flex max-w-7xl max-h-full w-full gap-6" onClick={(e) => e.stopPropagation()}>
                                 <button
                                     onClick={closeLightbox}
-                                    className="absolute top-4 right-4 z-60 bg-white bg-opacity-20 text-white rounded-full p-2 hover:bg-opacity-30 transition-colors"
+                                    className="absolute top-6 right-6 z-60 bg-white bg-opacity-20 text-white rounded-full p-2 hover:bg-opacity-30 transition-colors"
                                     title="关闭"
                                 >
                                     <XCircle size={24} />
                                 </button>
                                 
-                                <div className="flex flex-col items-center">
+                                {/* 媒体内容区域 */}
+                                <div className="flex-1 flex items-center justify-center">
                                     {lightboxMedia.type === 'image' ? (
                                         <img
                                             src={lightboxMedia.dataUrl}
                                             alt={lightboxMedia.name}
-                                            className="max-w-full max-h-[90vh] object-contain rounded-lg"
-                                            onClick={(e) => e.stopPropagation()}
+                                            className="max-w-full max-h-full object-contain rounded-lg"
                                         />
-                                    ) : (
+                                    ) : lightboxMedia.type === 'video' ? (
                                         <video
                                             src={lightboxMedia.dataUrl}
                                             controls
                                             autoPlay
-                                            className="max-w-full max-h-[90vh] object-contain rounded-lg"
-                                            onClick={(e) => e.stopPropagation()}
+                                            className="max-w-full max-h-full object-contain rounded-lg"
                                         >
                                             您的浏览器不支持视频标签。
                                         </video>
-                                    )}
-                                    
-                                    {lightboxMedia.name && (
-                                        <p className="text-white text-sm mt-4 text-center bg-black bg-opacity-50 px-4 py-2 rounded">
-                                            {lightboxMedia.name}
-                                        </p>
+                                    ) : (
+                                        // 纯文字类型 - 不显示媒体内容，只显示右侧文字面板
+                                        <div className="flex items-center justify-center text-gray-400 text-xl">
+                                            📝 文字内容
+                                        </div>
                                     )}
                                 </div>
+                                
+                                {/* 文字内容区域 */}
+                                {lightboxMedia.caption && (
+                                    <div className="w-80 bg-white rounded-lg p-6 flex flex-col max-h-full">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h3 className="text-lg font-semibold text-gray-800">文案内容</h3>
+                                            <button
+                                                onClick={async () => {
+                                                    try {
+                                                        await navigator.clipboard.writeText(lightboxMedia.caption);
+                                                        showTemporaryMessage('文案已复制到剪贴板', 'success');
+                                                    } catch (err) {
+                                                        showTemporaryMessage('复制失败，请手动复制', 'error');
+                                                    }
+                                                }}
+                                                className="px-3 py-1 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 transition-colors flex items-center gap-1"
+                                                title="复制文案"
+                                            >
+                                                📋 复制
+                                            </button>
+                                        </div>
+                                        <div className="flex-1 overflow-y-auto border rounded-md p-4 bg-gray-50">
+                                            <p className="text-gray-700 leading-relaxed whitespace-pre-wrap text-base font-normal">
+                                                {lightboxMedia.caption}
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
