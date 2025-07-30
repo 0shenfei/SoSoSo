@@ -125,12 +125,26 @@
                 const fileSize = file.size;
                 const isLargeFile = fileSize > STORAGE_CONFIG.MAX_LOCAL_FILE_SIZE;
                 const isHugeFile = fileSize > STORAGE_CONFIG.MAX_CLOUD_FILE_SIZE;
+                const isVideo = file.type.startsWith('video/');
+                const needsCompression = isLargeFile && STORAGE_CONFIG.ENABLE_COMPRESSION;
+                
+                // 🎥 视频压缩策略：压缩后直接上传云端
+                if (isVideo && needsCompression && STORAGE_CONFIG.AUTO_VIDEO_COMPRESSION) {
+                    return {
+                        storeLocal: false,        // 不存储在本地
+                        storeCloud: true,         // 直接上传云端
+                        needsCompression: true,   // 需要压缩
+                        createThumbnail: true,    // 生成缩略图
+                        uploadCompressed: true,   // 标记为压缩后上传
+                        localThumbnailOnly: true  // 本地只保存缩略图
+                    };
+                }
                 
                 return {
-                    storeLocal: !isHugeFile, // 只要不超过云端限制就本地存储
+                    storeLocal: !isHugeFile,  // 其他文件的本地存储策略
                     storeCloud: STORAGE_CONFIG.AUTO_CLOUD_SYNC && !isHugeFile,
-                    needsCompression: isLargeFile && STORAGE_CONFIG.ENABLE_COMPRESSION,
-                    createThumbnail: file.type.startsWith('video/') || isLargeFile
+                    needsCompression: needsCompression,
+                    createThumbnail: isVideo || isLargeFile
                 };
             }
 
@@ -168,8 +182,27 @@
                         }
                     }
 
-                    // 2. 处理本地存储
-                    if (strategy.storeLocal) {
+                    // 2. 处理存储策略
+                    if (strategy.uploadCompressed && strategy.needsCompression) {
+                        // 🎥 压缩视频直传云端策略
+                        const startTime = Date.now();
+                        console.log(`🚀 视频将压缩后直接上传云端: ${file.name}`);
+                        
+                        result.compressedBlob = await this.compressFileToBlob(file);
+                        result.isCompressed = true;
+                        result.compressionTime = Date.now() - startTime;
+                        result.compressedSize = (result.compressedBlob.size / 1024 / 1024).toFixed(1) + 'MB';
+                        
+                        // 本地只保存缩略图，用于预览
+                        result.dataUrl = result.thumbnail;
+                        result.originalDataUrl = null; // 不保存原视频在本地
+                        result.needsCloudUpload = true;
+                        result.uploadCompressed = true;
+                        
+                        console.log(`📤 压缩完成，准备上传: ${file.name} (${result.compressedSize})`);
+                        
+                    } else if (strategy.storeLocal) {
+                        // 传统本地存储策略
                         if (strategy.needsCompression) {
                             const startTime = Date.now();
                             result.dataUrl = await this.compressFile(file);
@@ -179,7 +212,7 @@
                             // 估算压缩后的大小
                             if (result.dataUrl) {
                                 const base64Length = result.dataUrl.split(',')[1]?.length || 0;
-                                const sizeInBytes = (base64Length * 3) / 4; // Base64解码大小估算
+                                const sizeInBytes = (base64Length * 3) / 4;
                                 result.compressedSize = (sizeInBytes / 1024 / 1024).toFixed(1) + 'MB';
                             }
                         } else {
@@ -292,6 +325,17 @@
                     return this.compressVideo(file);
                 }
                 return this.fileToDataUrl(file);
+            }
+
+            // 🗜️ 压缩文件到Blob（用于云端上传）
+            async compressFileToBlob(file) {
+                if (file.type.startsWith('image/')) {
+                    const dataUrl = await this.compressImage(file);
+                    return this.dataUrlToBlob(dataUrl);
+                } else if (file.type.startsWith('video/')) {
+                    return this.compressVideoToBlob(file);
+                }
+                return file;
             }
 
             // 🎥 压缩视频
@@ -484,6 +528,41 @@
                 });
             }
 
+            // 🎥 压缩视频到Blob（直接返回Blob用于上传）
+            async compressVideoToBlob(file) {
+                console.log(`🎬 压缩视频到Blob: ${file.name}, 原始大小: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
+                
+                // 检查是否启用自动压缩
+                if (!STORAGE_CONFIG.AUTO_VIDEO_COMPRESSION) {
+                    console.log('🔧 自动视频压缩已禁用');
+                    return file;
+                }
+                
+                const compressionConfig = STORAGE_CONFIG.VIDEO_COMPRESSION;
+
+                // 如果文件已经很小，直接返回
+                if (file.size < compressionConfig.skipCompressionSizeMB * 1024 * 1024) {
+                    console.log('📁 文件已经很小，跳过压缩');
+                    return file;
+                }
+
+                try {
+                    // 使用MediaRecorder API进行视频压缩，直接返回Blob
+                    const compressedBlob = await this.compressVideoWithMediaRecorder(file, compressionConfig);
+                    
+                    if (compressedBlob && compressedBlob.size < file.size) {
+                        console.log(`✅ 视频压缩到Blob成功: ${file.name}, 压缩后大小: ${(compressedBlob.size / 1024 / 1024).toFixed(2)} MB`);
+                        return compressedBlob;
+                    } else {
+                        console.log('🔄 MediaRecorder压缩效果不佳，返回原文件...');
+                        return file;
+                    }
+                } catch (error) {
+                    console.warn('MediaRecorder压缩失败，返回原文件:', error);
+                    return file;
+                }
+            }
+
             // 📄 Blob转DataURL
             async blobToDataUrl(blob) {
                 return new Promise((resolve, reject) => {
@@ -492,6 +571,19 @@
                     reader.onerror = reject;
                     reader.readAsDataURL(blob);
                 });
+            }
+
+            // 📄 DataURL转Blob
+            dataUrlToBlob(dataUrl) {
+                const arr = dataUrl.split(',');
+                const mime = arr[0].match(/:(.*?);/)[1];
+                const bstr = atob(arr[1]);
+                let n = bstr.length;
+                const u8arr = new Uint8Array(n);
+                while (n--) {
+                    u8arr[n] = bstr.charCodeAt(n);
+                }
+                return new Blob([u8arr], { type: mime });
             }
 
             // 🖼️ 压缩图片
@@ -610,8 +702,8 @@
 
         // Supabase数据服务
         const SupabaseService = {
-            // 上传文件到Supabase Storage (支持进度回调)
-            async uploadFile(file, fileName, userId, progressCallback = null) {
+            // 上传文件到Supabase Storage (支持进度回调和压缩Blob)
+            async uploadFile(file, fileName, userId, progressCallback = null, isCompressed = false) {
                 try {
                     // 验证文件
                     if (!file || !fileName || !userId) {
@@ -619,10 +711,16 @@
                         return null;
                     }
 
-                    const fileExt = fileName.split('.').pop();
+                    // 处理压缩文件的扩展名
+                    let fileExt = fileName.split('.').pop();
+                    if (isCompressed && file.type && file.type.includes('webm')) {
+                        fileExt = 'webm'; // 压缩后的视频使用webm扩展名
+                    }
+                    
                     const filePath = `${userId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
                     
-                    if (DEBUG_MODE) console.log(`开始上传文件: ${fileName}, 大小: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
+                    const sizeInfo = isCompressed ? '(压缩后)' : '';
+                    if (DEBUG_MODE) console.log(`开始上传文件: ${fileName} ${sizeInfo}, 大小: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
                     
                     // 对于大文件，显示上传进度
                     if (progressCallback) {
@@ -778,30 +876,76 @@
                                     
                                     for (const fileData of post.files) {
                                         try {
-                                            if (fileData.file && !fileData.cloudUrl && !fileData.uploaded) {
-                                                // 尝试上传新文件
-                                                if (DEBUG_MODE) console.log(`尝试上传文件: ${fileData.name}`);
-                                                const uploadResult = await this.uploadFile(fileData.file, fileData.name, user.id, progressCallback);
-                                                
-                                                if (uploadResult) {
-                                                    uploadedFiles.push({
-                                                        ...fileData,
-                                                        cloudUrl: uploadResult.publicUrl,
-                                                        cloudPath: uploadResult.filePath,
-                                                        uploaded: true,
-                                                        // 对于视频，保留缩略图作为预览，云端URL作为播放源
-                                                        dataUrl: fileData.type === 'video' ? fileData.thumbnail : fileData.dataUrl,
-                                                        originalDataUrl: uploadResult.publicUrl, // 使用云端URL作为原始URL
-                                                        file: null // 清除原始文件对象，节省内存
-                                                    });
-                                                    if (DEBUG_MODE) console.log(`文件上传成功: ${fileData.name}`);
+                                            if ((fileData.file || fileData.compressedBlob) && !fileData.cloudUrl && !fileData.uploaded) {
+                                                // 🎥 优先上传压缩后的Blob（用于视频）
+                                                if (fileData.uploadCompressed && fileData.compressedBlob) {
+                                                    if (DEBUG_MODE) console.log(`上传压缩视频: ${fileData.name}`);
+                                                    const uploadResult = await this.uploadFile(
+                                                        fileData.compressedBlob, 
+                                                        fileData.name, 
+                                                        user.id, 
+                                                        progressCallback, 
+                                                        true // 标记为压缩文件
+                                                    );
+                                                    
+                                                    if (uploadResult) {
+                                                        uploadedFiles.push({
+                                                            ...fileData,
+                                                            cloudUrl: uploadResult.publicUrl,
+                                                            cloudPath: uploadResult.filePath,
+                                                            uploaded: true,
+                                                            isCloudCompressed: true, // 标记为云端压缩文件
+                                                            // 本地只保留缩略图，云端URL用于播放
+                                                            dataUrl: fileData.thumbnail,
+                                                            originalDataUrl: uploadResult.publicUrl,
+                                                            file: null,           // 清除原始文件
+                                                            compressedBlob: null  // 清除压缩Blob，节省内存
+                                                        });
+                                                        if (DEBUG_MODE) console.log(`压缩视频上传成功: ${fileData.name} -> ${fileData.compressedSize}`);
+                                                    } else {
+                                                        // 压缩上传失败，尝试原文件
+                                                        if (DEBUG_MODE) console.log(`压缩上传失败，尝试原文件: ${fileData.name}`);
+                                                        const originalUpload = await this.uploadFile(fileData.file, fileData.name, user.id, progressCallback);
+                                                        if (originalUpload) {
+                                                            uploadedFiles.push({
+                                                                ...fileData,
+                                                                cloudUrl: originalUpload.publicUrl,
+                                                                cloudPath: originalUpload.filePath,
+                                                                uploaded: true,
+                                                                dataUrl: fileData.thumbnail,
+                                                                originalDataUrl: originalUpload.publicUrl,
+                                                                file: null,
+                                                                compressedBlob: null
+                                                            });
+                                                        } else {
+                                                            uploadedFiles.push({ ...fileData, uploaded: false });
+                                                        }
+                                                    }
                                                 } else {
-                                                    // 上传失败，保留原始数据但标记为本地文件
-                                                    uploadedFiles.push({
-                                                        ...fileData,
-                                                        uploaded: false
-                                                    });
-                                                    if (DEBUG_MODE) console.log(`文件上传失败，保留本地: ${fileData.name}`);
+                                                    // 常规文件上传
+                                                    if (DEBUG_MODE) console.log(`上传原文件: ${fileData.name}`);
+                                                    const uploadResult = await this.uploadFile(fileData.file, fileData.name, user.id, progressCallback);
+                                                    
+                                                    if (uploadResult) {
+                                                        uploadedFiles.push({
+                                                            ...fileData,
+                                                            cloudUrl: uploadResult.publicUrl,
+                                                            cloudPath: uploadResult.filePath,
+                                                            uploaded: true,
+                                                            // 对于视频，保留缩略图作为预览，云端URL作为播放源
+                                                            dataUrl: fileData.type === 'video' ? fileData.thumbnail : fileData.dataUrl,
+                                                            originalDataUrl: uploadResult.publicUrl, // 使用云端URL作为原始URL
+                                                            file: null // 清除原始文件对象，节省内存
+                                                        });
+                                                        if (DEBUG_MODE) console.log(`文件上传成功: ${fileData.name}`);
+                                                    } else {
+                                                        // 上传失败，保留原始数据但标记为本地文件
+                                                        uploadedFiles.push({
+                                                            ...fileData,
+                                                            uploaded: false
+                                                        });
+                                                        if (DEBUG_MODE) console.log(`文件上传失败，保留本地: ${fileData.name}`);
+                                                    }
                                                 }
                                             } else {
                                                 // 已经上传过的文件或已有云端URL
@@ -1677,16 +1821,30 @@
             const openLightbox = (media) => {
                 console.log('OpenLightbox called with:', media);
                 
-                // 简化的播放源选择：直接使用DataURL
+                // 🎥 智能播放源选择：云端优先策略
+                let playbackUrl = media.dataUrl;
+                
+                // 优先级：云端URL > 原始DataURL > 普通DataURL
+                if (media.cloudUrl) {
+                    playbackUrl = media.cloudUrl;
+                    console.log('🌐 使用云端URL播放:', media.cloudUrl);
+                } else if (media.originalDataUrl) {
+                    playbackUrl = media.originalDataUrl;
+                    console.log('📁 使用原始DataURL播放');
+                } else if (media.dataUrl) {
+                    playbackUrl = media.dataUrl;
+                    console.log('💾 使用缓存DataURL播放');
+                }
+                
                 const processedMedia = {
                     ...media,
-                    // 直接使用存储的DataURL，这应该是完整的视频或图片
-                    dataUrl: media.originalDataUrl || media.dataUrl,
-                    type: media.type || (media.name && media.name.includes('.mp4') ? 'video' : 'image')
+                    dataUrl: playbackUrl,
+                    type: media.type || (media.name && media.name.includes('.mp4') ? 'video' : 'image'),
+                    isCloudBased: !!media.cloudUrl // 标记是否为云端文件
                 };
                 
                 console.log('Processed media for lightbox:', processedMedia);
-                console.log('Using dataUrl:', processedMedia.dataUrl?.substring(0, 50) + '...');
+                console.log('Using playback URL:', playbackUrl?.substring(0, 50) + '...');
                 
                 setLightboxMedia(processedMedia);
                 setCurrentLightboxIndex(media.currentIndex || 0);
@@ -1916,7 +2074,12 @@
                                 if (processedFile.isCompressed && file.type.startsWith('video/')) {
                                     const originalSize = (file.size / 1024 / 1024).toFixed(1);
                                     const compressedSize = processedFile.compressedSize || '未知';
-                                    showTemporaryMessage(`✅ 视频压缩完成: ${originalSize}MB → ${compressedSize}`, 'success');
+                                    
+                                    if (processedFile.uploadCompressed) {
+                                        showTemporaryMessage(`🚀 视频压缩完成，将直传云端: ${originalSize}MB → ${compressedSize}`, 'success');
+                                    } else {
+                                        showTemporaryMessage(`✅ 视频压缩完成: ${originalSize}MB → ${compressedSize}`, 'success');
+                                    }
                                 }
                                 
                                 if (uploadProgress) {
