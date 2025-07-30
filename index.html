@@ -81,7 +81,81 @@
 
         // Supabase数据服务
         const SupabaseService = {
-            // 保存发布内容到云端
+            // 上传文件到Supabase Storage
+            async uploadFile(file, fileName, userId) {
+                try {
+                    const fileExt = fileName.split('.').pop();
+                    const filePath = `${userId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+                    
+                    const { data, error } = await supabase.storage
+                        .from('media-files')
+                        .upload(filePath, file);
+
+                    if (error) {
+                        console.error('文件上传失败:', error);
+                        return null;
+                    }
+
+                    // 获取公共URL
+                    const { data: { publicUrl } } = supabase.storage
+                        .from('media-files')
+                        .getPublicUrl(filePath);
+
+                    return {
+                        filePath: filePath,
+                        publicUrl: publicUrl,
+                        fileName: fileName,
+                        fileSize: file.size
+                    };
+                } catch (error) {
+                    console.error('上传文件错误:', error);
+                    return null;
+                }
+            },
+
+            // 删除文件从Supabase Storage
+            async deleteFile(filePath) {
+                try {
+                    const { error } = await supabase.storage
+                        .from('media-files')
+                        .remove([filePath]);
+                    
+                    if (error) {
+                        console.error('删除文件失败:', error);
+                        return false;
+                    }
+                    return true;
+                } catch (error) {
+                    console.error('删除文件错误:', error);
+                    return false;
+                }
+            },
+
+            // 批量上传文件
+            async uploadFiles(files, userId) {
+                const uploadPromises = files.map(async (fileData) => {
+                    if (fileData.file) {
+                        // 如果有原始文件，上传到云端
+                        const uploadResult = await this.uploadFile(fileData.file, fileData.name, userId);
+                        if (uploadResult) {
+                            return {
+                                ...fileData,
+                                cloudUrl: uploadResult.publicUrl,
+                                cloudPath: uploadResult.filePath,
+                                uploaded: true
+                            };
+                        }
+                    }
+                    return {
+                        ...fileData,
+                        uploaded: false
+                    };
+                });
+
+                return await Promise.all(uploadPromises);
+            },
+
+            // 保存发布内容到云端（包含文件上传）
             async savePosts(posts) {
                 if (!isSupabaseConfigured) return;
                 
@@ -89,38 +163,103 @@
                     const { data: { user } } = await supabase.auth.getUser();
                     if (!user) return;
 
-                    // 转换数据格式
-                    const postsData = [];
-                    Object.entries(posts).forEach(([date, dayPosts]) => {
-                        dayPosts.forEach(post => {
-                            postsData.push({
-                                user_id: user.id,
-                                date,
-                                caption: post.caption || '',
-                                platforms: post.platforms || []
-                            });
-                        });
-                    });
+                    console.log('开始保存数据到云端...');
 
-                    // 先删除现有数据，再插入新数据
-                    try {
-                        await supabase.from('posts').delete().eq('user_id', user.id);
-                        
-                        if (postsData.length > 0) {
-                            const { error } = await supabase.from('posts').insert(postsData);
-                            if (error) {
-                                console.log('数据库表尚未创建，当前仅本地存储模式');
+                    // 处理每个日期的帖子
+                    for (const [date, dayPosts] of Object.entries(posts)) {
+                        for (const post of dayPosts) {
+                            try {
+                                // 如果有文件且尚未上传，先上传文件
+                                let uploadedFiles = [];
+                                if (post.files && post.files.length > 0) {
+                                    console.log(`正在上传 ${post.files.length} 个文件...`);
+                                    
+                                    for (const fileData of post.files) {
+                                        if (fileData.file && !fileData.cloudUrl) {
+                                            const uploadResult = await this.uploadFile(fileData.file, fileData.name, user.id);
+                                            if (uploadResult) {
+                                                uploadedFiles.push({
+                                                    ...fileData,
+                                                    cloudUrl: uploadResult.publicUrl,
+                                                    cloudPath: uploadResult.filePath,
+                                                    uploaded: true
+                                                });
+                                                console.log(`文件上传成功: ${fileData.name}`);
+                                            } else {
+                                                // 上传失败，保留原始数据
+                                                uploadedFiles.push(fileData);
+                                                console.log(`文件上传失败: ${fileData.name}`);
+                                            }
+                                        } else {
+                                            // 已经上传过的文件或没有原始文件
+                                            uploadedFiles.push(fileData);
+                                        }
+                                    }
+                                }
+
+                                // 保存帖子数据到数据库
+                                const postData = {
+                                    user_id: user.id,
+                                    date,
+                                    caption: post.caption || '',
+                                    platforms: post.platforms || []
+                                };
+
+                                // 删除该日期的现有数据
+                                await supabase.from('posts').delete().eq('user_id', user.id).eq('date', date);
+                                
+                                // 插入新数据
+                                const { data: insertedPost, error: postError } = await supabase
+                                    .from('posts')
+                                    .insert(postData)
+                                    .select()
+                                    .single();
+
+                                if (postError) {
+                                    console.log('数据库表尚未创建，跳过数据库保存');
+                                    continue;
+                                }
+
+                                // 保存文件信息到数据库
+                                if (uploadedFiles.length > 0 && insertedPost) {
+                                    const mediaData = uploadedFiles.map(file => ({
+                                        post_id: insertedPost.id,
+                                        file_name: file.name,
+                                        file_type: file.type.startsWith('image') ? 'image' : 'video',
+                                        file_url: file.cloudUrl || file.dataUrl,
+                                        thumbnail_url: file.thumbnail,
+                                        compressed_url: file.dataUrl,
+                                        file_size: file.size,
+                                        original_name: file.name
+                                    }));
+
+                                    const { error: mediaError } = await supabase
+                                        .from('media_files')
+                                        .insert(mediaData);
+
+                                    if (mediaError) {
+                                        console.log('媒体文件表尚未创建，仅保存帖子数据');
+                                    }
+                                }
+
+                                // 更新本地数据中的云端信息
+                                if (uploadedFiles.length > 0) {
+                                    post.files = uploadedFiles;
+                                }
+
+                            } catch (postError) {
+                                console.error('保存单个帖子失败:', postError);
                             }
                         }
-                    } catch (dbError) {
-                        console.log('数据库表尚未创建，当前仅本地存储模式');
                     }
+
+                    console.log('云端保存完成');
                 } catch (error) {
                     console.error('Supabase保存错误:', error);
                 }
             },
 
-            // 从云端加载发布内容
+            // 从云端加载发布内容（包含文件）
             async loadPosts() {
                 if (!isSupabaseConfigured) return null;
                 
@@ -128,30 +267,56 @@
                     const { data: { user } } = await supabase.auth.getUser();
                     if (!user) return null;
 
+                    console.log('从云端加载数据...');
+
                     // 尝试从数据库加载，如果失败就返回null（保持本地数据）
                     try {
-                        const { data, error } = await supabase
+                        // 加载帖子数据，包含关联的媒体文件
+                        const { data: postsData, error: postsError } = await supabase
                             .from('posts')
-                            .select('*')
+                            .select(`
+                                *,
+                                media_files (*)
+                            `)
                             .eq('user_id', user.id)
                             .order('date', { ascending: true });
 
-                        if (error) {
+                        if (postsError) {
                             console.log('云端暂无数据，保持本地数据');
                             return null;
                         }
 
+                        if (!postsData || postsData.length === 0) {
+                            console.log('云端数据为空');
+                            return {};
+                        }
+
                         // 转换为原有格式
                         const posts = {};
-                        data.forEach(post => {
+                        postsData.forEach(post => {
                             if (!posts[post.date]) posts[post.date] = [];
+                            
+                            // 处理媒体文件
+                            const files = (post.media_files || []).map(mediaFile => ({
+                                name: mediaFile.original_name || mediaFile.file_name,
+                                type: mediaFile.file_type === 'image' ? 'image/jpeg' : 'video/mp4',
+                                size: mediaFile.file_size || 0,
+                                dataUrl: mediaFile.compressed_url || mediaFile.file_url,
+                                originalDataUrl: mediaFile.file_url,
+                                cloudUrl: mediaFile.file_url,
+                                cloudPath: mediaFile.file_name,
+                                thumbnail: mediaFile.thumbnail_url,
+                                uploaded: true
+                            }));
+
                             posts[post.date].push({
                                 caption: post.caption,
                                 platforms: post.platforms,
-                                files: [] // 暂时保持空，优先使用本地媒体文件
+                                files: files
                             });
                         });
 
+                        console.log(`成功加载 ${Object.keys(posts).length} 个日期的数据`);
                         return posts;
                     } catch (dbError) {
                         console.log('数据库表尚未创建或连接失败，保持本地数据');
@@ -352,6 +517,7 @@
             const [lightboxMedia, setLightboxMedia] = React.useState(null);
             const [carouselIndices, setCarouselIndices] = React.useState({});
             const [notificationsEnabled, setNotificationsEnabled] = React.useState(false);
+            const [uploadProgress, setUploadProgress] = React.useState({});
             const [currentLightboxIndex, setCurrentLightboxIndex] = React.useState(0);
 
             const platforms = [
@@ -370,7 +536,15 @@
                     
                     // 如果用户已登录，同时保存到Supabase
                     if (user && isSupabaseConfigured) {
-                        SupabaseService.savePosts(scheduledPosts);
+                        // 显示上传状态
+                        showTemporaryMessage('正在同步到云端...', 'info');
+                        
+                        // 异步上传，不阻塞界面
+                        SupabaseService.savePosts(scheduledPosts).then(() => {
+                            showTemporaryMessage('云端同步完成！', 'success');
+                        }).catch(() => {
+                            showTemporaryMessage('云端同步失败，数据已保存在本地', 'warning');
+                        });
                     }
                 } catch (error) {
                     console.error('保存数据失败:', error);
@@ -389,37 +563,15 @@
                         const currentUser = await SupabaseService.getCurrentUser();
                         setUser(currentUser);
 
-                        // 如果用户已登录，尝试从云端加载数据并与本地数据合并
+                        // 如果用户已登录，尝试从云端加载数据
                         if (currentUser) {
                             const cloudPosts = await SupabaseService.loadPosts();
                             if (cloudPosts && Object.keys(cloudPosts).length > 0) {
-                                // 智能合并：保留本地的媒体文件，使用云端的文案
-                                setScheduledPosts(prevPosts => {
-                                    const mergedPosts = { ...prevPosts };
-                                    
-                                    // 合并云端数据，但保留本地的媒体文件
-                                    Object.entries(cloudPosts).forEach(([date, cloudDayPosts]) => {
-                                        if (mergedPosts[date] && mergedPosts[date][0] && mergedPosts[date][0].files) {
-                                            // 如果本地有媒体文件，保留它们，只更新文案
-                                            cloudDayPosts.forEach((cloudPost, index) => {
-                                                if (mergedPosts[date][index]) {
-                                                    mergedPosts[date][index].caption = cloudPost.caption;
-                                                    mergedPosts[date][index].platforms = cloudPost.platforms;
-                                                } else {
-                                                    mergedPosts[date][index] = cloudPost;
-                                                }
-                                            });
-                                        } else {
-                                            // 如果本地没有这个日期的数据，直接使用云端数据
-                                            mergedPosts[date] = cloudDayPosts;
-                                        }
-                                    });
-                                    
-                                    return mergedPosts;
-                                });
-                                showTemporaryMessage('云端数据已同步（保留本地媒体文件）', 'success');
+                                // 优先使用云端数据（包含已上传的文件）
+                                setScheduledPosts(cloudPosts);
+                                showTemporaryMessage('云端数据已同步！', 'success');
                             } else {
-                                showTemporaryMessage('已登录，本地数据将同步到云端', 'success');
+                                showTemporaryMessage('已登录，本地数据将上传到云端', 'success');
                             }
                         }
                     } catch (error) {
@@ -441,29 +593,9 @@
                                 showTemporaryMessage('登录成功！正在同步数据...', 'success');
                                 const cloudPosts = await SupabaseService.loadPosts();
                                 if (cloudPosts && Object.keys(cloudPosts).length > 0) {
-                                    // 智能合并：保留本地的媒体文件，同步云端的文案
-                                    setScheduledPosts(prevPosts => {
-                                        const mergedPosts = { ...prevPosts };
-                                        
-                                        Object.entries(cloudPosts).forEach(([date, cloudDayPosts]) => {
-                                            if (mergedPosts[date] && mergedPosts[date][0] && mergedPosts[date][0].files) {
-                                                // 保留本地媒体文件，更新文案
-                                                cloudDayPosts.forEach((cloudPost, index) => {
-                                                    if (mergedPosts[date][index]) {
-                                                        mergedPosts[date][index].caption = cloudPost.caption;
-                                                        mergedPosts[date][index].platforms = cloudPost.platforms;
-                                                    } else {
-                                                        mergedPosts[date][index] = cloudPost;
-                                                    }
-                                                });
-                                            } else {
-                                                mergedPosts[date] = cloudDayPosts;
-                                            }
-                                        });
-                                        
-                                        return mergedPosts;
-                                    });
-                                    showTemporaryMessage('数据同步完成（本地媒体文件已保留）', 'success');
+                                    // 使用云端完整数据（包含文件）
+                                    setScheduledPosts(cloudPosts);
+                                    showTemporaryMessage('云端数据同步完成！', 'success');
                                 } else {
                                     showTemporaryMessage('登录成功！本地数据将上传到云端', 'success');
                                 }
