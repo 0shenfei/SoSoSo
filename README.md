@@ -53,10 +53,26 @@
 - **删除内容**：点击右上角蓝色删除按钮
 - **编辑内容**：重新添加内容覆盖原有内容
 
+## 🚀 自动部署
+
+项目已配置自动部署功能，支持一键更新：
+
+```bash
+# 快速部署（推荐）
+./deploy.sh "你的提交信息"
+
+# 示例
+./deploy.sh "修复了日历显示问题"
+```
+
+详细说明请查看：[自动部署指南](AUTO_DEPLOY.md)
+
 ## 🌐 在线访问
 
 访问 GitHub Pages 部署的在线版本：
 [https://your-username.github.io/your-repository-name](https://your-username.github.io/your-repository-name)
+
+> 💡 每次推送代码后，网站会在1-3分钟内自动更新
 
 ## 📄 许可证
 
